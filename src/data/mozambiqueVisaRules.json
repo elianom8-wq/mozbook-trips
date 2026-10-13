@@ -1,0 +1,887 @@
+{
+  "collection": "mozambique_visa_rules",
+  "version": "2026-09",
+  "source": {
+    "name": "Mozambique National Migration Service - Official eVisa & eTA Portal",
+    "url": "https://evisa.gov.mz/",
+    "last_verified": "2026-09-23"
+  },
+
+  "defaults": {
+    "visa_status": "EVISA_REQUIRED",
+    "eta_required": false,
+    "evisa_available": true,
+    "embassy_required": false,
+    "border_visa_possible": "CONDITIONAL",
+    "max_stay_days": null,
+    "passport_validity_months": 6,
+    "travel_purposes": [
+      "TOURISM",
+      "BUSINESS"
+    ],
+    "message": "You may need to apply for a Mozambique eVisa before travelling. Check the official Mozambique eVisa portal for the visa category applicable to your nationality, passport type and purpose of travel.",
+    "arrival_message": "Travel with your approved visa and supporting documents. Final admission is determined by Mozambique immigration authorities.",
+    "source": "https://evisa.gov.mz/"
+  },
+
+  "border_visa_information": {
+    "status": "CONDITIONAL",
+    "message": "Mozambique has authorised border posts that may issue border visas. Eligibility and issuance are subject to the applicable immigration rules and the decision of the immigration authorities. Do not assume that every nationality can obtain a visa on arrival.",
+    "official_source": "https://minec.gov.mz/vistos-de-entrada/",
+    "authorized_entry_points": [
+      "Maputo International Airport",
+      "Ressano Garcia",
+      "Namaacha",
+      "Ponta de Ouro",
+      "Goba",
+      "Chicualacuala",
+      "Giryondo",
+      "Pafuri",
+      "Vilanculos Aerodrome",
+      "Inhambane Aerodrome",
+      "Beira International Airport",
+      "Machipanda",
+      "Espungabera",
+      "Chimoio Aerodrome",
+      "Tete Aerodrome",
+      "Cuchamano",
+      "Cassacatiza",
+      "Calomue",
+      "Songo Aerodrome",
+      "Zobwé",
+      "Quelimane Aerodrome",
+      "Melosa",
+      "Nampula International Airport",
+      "Mandimba",
+      "Lichinga Aerodrome",
+      "Pemba Aerodrome",
+      "Mocimboa da Praia Aerodrome"
+    ]
+  },
+
+  "countries": {
+
+    "angola": {
+      "country_name": "Angola",
+      "country_code": "AO",
+      "visa_status": "VISA_FREE",
+      "passport_types": ["ORDINARY", "DIPLOMATIC", "SERVICE", "OFFICIAL", "SPECIAL"],
+      "travel_purposes": ["TOURISM", "BUSINESS"],
+      "max_stay_days": 30,
+      "eta_required": false,
+      "evisa_available": true,
+      "embassy_required": false,
+      "border_visa_possible": false
+    },
+
+    "argentina": {
+      "country_name": "Argentina",
+      "country_code": "AR",
+      "visa_status": "VISA_FREE",
+      "passport_types": ["DIPLOMATIC", "SERVICE"],
+      "travel_purposes": ["TOURISM", "BUSINESS"],
+      "max_stay_days": 90,
+      "eta_required": false,
+      "evisa_available": true,
+      "embassy_required": false,
+      "border_visa_possible": false,
+      "ordinary_passport_result": "EVISA_REQUIRED"
+    },
+
+    "botswana": {
+      "country_name": "Botswana",
+      "country_code": "BW",
+      "visa_status": "VISA_FREE",
+      "passport_types": ["ORDINARY", "DIPLOMATIC", "SERVICE", "OFFICIAL", "SPECIAL"],
+      "travel_purposes": ["TOURISM", "BUSINESS"],
+      "max_stay_days": 90,
+      "eta_required": false,
+      "evisa_available": true,
+      "embassy_required": false,
+      "border_visa_possible": false
+    },
+
+    "brazil": {
+      "country_name": "Brazil",
+      "country_code": "BR",
+      "visa_status": "VISA_FREE",
+      "passport_types": ["DIPLOMATIC", "SERVICE"],
+      "travel_purposes": ["TOURISM", "BUSINESS"],
+      "max_stay_days": 90,
+      "eta_required": false,
+      "evisa_available": true,
+      "embassy_required": false,
+      "border_visa_possible": false,
+      "ordinary_passport_result": "EVISA_REQUIRED"
+    },
+
+    "cabo_verde": {
+      "country_name": "Cabo Verde",
+      "country_code": "CV",
+      "visa_status": "VISA_FREE",
+      "passport_types": ["ORDINARY", "DIPLOMATIC", "SERVICE", "OFFICIAL", "SPECIAL"],
+      "travel_purposes": ["TOURISM", "BUSINESS"],
+      "max_stay_days": 30,
+      "eta_required": false,
+      "evisa_available": true,
+      "embassy_required": false,
+      "border_visa_possible": false
+    },
+
+    "cuba": {
+      "country_name": "Cuba",
+      "country_code": "CU",
+      "visa_status": "VISA_FREE",
+      "passport_types": ["DIPLOMATIC", "OFFICIAL", "SERVICE"],
+      "travel_purposes": ["TOURISM", "BUSINESS"],
+      "max_stay_days": 90,
+      "eta_required": false,
+      "evisa_available": true,
+      "embassy_required": false,
+      "border_visa_possible": false,
+      "ordinary_passport_result": "EVISA_REQUIRED"
+    },
+
+    "egypt": {
+      "country_name": "Egypt",
+      "country_code": "EG",
+      "visa_status": "VISA_FREE",
+      "passport_types": ["DIPLOMATIC", "SERVICE", "SPECIAL"],
+      "travel_purposes": ["TOURISM", "BUSINESS"],
+      "max_stay_days": 90,
+      "eta_required": false,
+      "evisa_available": true,
+      "embassy_required": false,
+      "border_visa_possible": false,
+      "ordinary_passport_result": "EVISA_REQUIRED"
+    },
+
+    "guinea_bissau": {
+      "country_name": "Guinea-Bissau",
+      "country_code": "GW",
+      "visa_status": "VISA_FREE",
+      "passport_types": ["DIPLOMATIC", "SERVICE"],
+      "travel_purposes": ["TOURISM", "BUSINESS"],
+      "max_stay_days": 90,
+      "eta_required": false,
+      "evisa_available": true,
+      "embassy_required": false,
+      "border_visa_possible": false,
+      "ordinary_passport_result": "EVISA_REQUIRED"
+    },
+
+    "indonesia": {
+      "country_name": "Indonesia",
+      "country_code": "ID",
+      "visa_status": "VISA_FREE",
+      "passport_types": ["DIPLOMATIC", "SERVICE"],
+      "travel_purposes": ["TOURISM", "BUSINESS"],
+      "max_stay_days": 30,
+      "eta_required": false,
+      "evisa_available": true,
+      "embassy_required": false,
+      "border_visa_possible": false,
+      "ordinary_passport_result": "ETA_REQUIRED"
+    },
+
+    "kenya": {
+      "country_name": "Kenya",
+      "country_code": "KE",
+      "visa_status": "VISA_FREE",
+      "passport_types": ["ORDINARY", "DIPLOMATIC", "SERVICE", "OFFICIAL", "SPECIAL"],
+      "travel_purposes": ["TOURISM", "BUSINESS"],
+      "max_stay_days": 90,
+      "eta_required": false,
+      "evisa_available": true,
+      "embassy_required": false,
+      "border_visa_possible": false
+    },
+
+    "lesotho": {
+      "country_name": "Lesotho",
+      "country_code": "LS",
+      "visa_status": "VISA_FREE",
+      "passport_types": ["ORDINARY", "DIPLOMATIC", "SERVICE", "OFFICIAL", "SPECIAL"],
+      "travel_purposes": ["TOURISM", "BUSINESS"],
+      "max_stay_days": 30,
+      "eta_required": false,
+      "evisa_available": true,
+      "embassy_required": false,
+      "border_visa_possible": false
+    },
+
+    "malawi": {
+      "country_name": "Malawi",
+      "country_code": "MW",
+      "visa_status": "VISA_FREE",
+      "passport_types": ["ORDINARY", "DIPLOMATIC", "SERVICE", "OFFICIAL", "SPECIAL"],
+      "travel_purposes": ["TOURISM", "BUSINESS"],
+      "max_stay_days": 30,
+      "eta_required": false,
+      "evisa_available": true,
+      "embassy_required": false,
+      "border_visa_possible": false
+    },
+
+    "mauritius": {
+      "country_name": "Mauritius",
+      "country_code": "MU",
+      "visa_status": "VISA_FREE",
+      "passport_types": ["ORDINARY", "DIPLOMATIC", "SERVICE", "OFFICIAL", "SPECIAL"],
+      "travel_purposes": ["TOURISM", "BUSINESS"],
+      "max_stay_days": 30,
+      "eta_required": false,
+      "evisa_available": true,
+      "embassy_required": false,
+      "border_visa_possible": false
+    },
+
+    "namibia": {
+      "country_name": "Namibia",
+      "country_code": "NA",
+      "visa_status": "VISA_FREE",
+      "passport_types": ["ORDINARY", "DIPLOMATIC", "SERVICE", "OFFICIAL", "SPECIAL"],
+      "travel_purposes": ["TOURISM", "BUSINESS"],
+      "max_stay_days": 30,
+      "eta_required": false,
+      "evisa_available": true,
+      "embassy_required": false,
+      "border_visa_possible": false
+    },
+
+    "portugal": {
+      "country_name": "Portugal",
+      "country_code": "PT",
+      "visa_status": "VISA_FREE",
+      "passport_types": ["DIPLOMATIC", "SERVICE"],
+      "travel_purposes": ["TOURISM", "BUSINESS"],
+      "max_stay_days": 90,
+      "eta_required": false,
+      "evisa_available": true,
+      "embassy_required": false,
+      "border_visa_possible": false,
+      "ordinary_passport_result": "ETA_REQUIRED"
+    },
+
+    "rwanda": {
+      "country_name": "Rwanda",
+      "country_code": "RW",
+      "visa_status": "VISA_FREE",
+      "passport_types": ["ORDINARY", "DIPLOMATIC", "SERVICE", "OFFICIAL", "SPECIAL"],
+      "travel_purposes": ["TOURISM", "BUSINESS"],
+      "max_stay_days": 90,
+      "eta_required": false,
+      "evisa_available": true,
+      "embassy_required": false,
+      "border_visa_possible": false
+    },
+
+    "sao_tome_and_principe": {
+      "country_name": "São Tomé and Príncipe",
+      "country_code": "ST",
+      "visa_status": "VISA_FREE",
+      "passport_rules": [
+        {
+          "passport_types": ["DIPLOMATIC", "SERVICE"],
+          "max_stay_days": 90,
+          "travel_purposes": ["TOURISM", "BUSINESS"]
+        },
+        {
+          "passport_types": ["ORDINARY"],
+          "max_stay_days": 30,
+          "travel_purposes": ["TOURISM", "BUSINESS"]
+        }
+      ],
+      "eta_required": false,
+      "evisa_available": true,
+      "embassy_required": false,
+      "border_visa_possible": false
+    },
+
+    "seychelles": {
+      "country_name": "Seychelles",
+      "country_code": "SC",
+      "visa_status": "VISA_FREE",
+      "passport_types": ["ORDINARY", "DIPLOMATIC", "SERVICE", "OFFICIAL", "SPECIAL"],
+      "travel_purposes": ["TOURISM", "BUSINESS"],
+      "max_stay_days": 30,
+      "eta_required": false,
+      "evisa_available": true,
+      "embassy_required": false,
+      "border_visa_possible": false
+    },
+
+    "south_africa": {
+      "country_name": "South Africa",
+      "country_code": "ZA",
+      "visa_status": "VISA_FREE",
+      "passport_rules": [
+        {
+          "passport_types": ["ORDINARY"],
+          "max_stay_days": 30,
+          "travel_purposes": ["TOURISM", "BUSINESS"]
+        },
+        {
+          "passport_types": ["DIPLOMATIC", "SERVICE"],
+          "max_stay_days": 90,
+          "travel_purposes": ["TOURISM", "BUSINESS"]
+        }
+      ],
+      "eta_required": false,
+      "evisa_available": true,
+      "embassy_required": false,
+      "border_visa_possible": false
+    },
+
+    "south_korea": {
+      "country_name": "South Korea",
+      "country_code": "KR",
+      "visa_status": "VISA_FREE",
+      "passport_types": ["DIPLOMATIC", "SERVICE"],
+      "travel_purposes": ["TOURISM", "BUSINESS"],
+      "max_stay_days": 90,
+      "eta_required": false,
+      "evisa_available": true,
+      "embassy_required": false,
+      "border_visa_possible": false,
+      "ordinary_passport_result": "ETA_REQUIRED"
+    },
+
+    "eswatini": {
+      "country_name": "Eswatini",
+      "country_code": "SZ",
+      "visa_status": "VISA_FREE",
+      "passport_types": ["ORDINARY", "DIPLOMATIC", "SERVICE", "OFFICIAL", "SPECIAL"],
+      "travel_purposes": ["TOURISM", "BUSINESS"],
+      "max_stay_days": 30,
+      "eta_required": false,
+      "evisa_available": true,
+      "embassy_required": false,
+      "border_visa_possible": false
+    },
+
+    "tanzania": {
+      "country_name": "Tanzania",
+      "country_code": "TZ",
+      "visa_status": "VISA_FREE",
+      "passport_types": ["ORDINARY", "DIPLOMATIC", "SERVICE", "OFFICIAL", "SPECIAL"],
+      "travel_purposes": ["TOURISM", "BUSINESS"],
+      "max_stay_days": 90,
+      "eta_required": false,
+      "evisa_available": true,
+      "embassy_required": false,
+      "border_visa_possible": false
+    },
+
+    "thailand": {
+      "country_name": "Thailand",
+      "country_code": "TH",
+      "visa_status": "VISA_FREE",
+      "passport_types": ["DIPLOMATIC", "SERVICE"],
+      "travel_purposes": ["TOURISM", "BUSINESS"],
+      "max_stay_days": 30,
+      "eta_required": false,
+      "evisa_available": true,
+      "embassy_required": false,
+      "border_visa_possible": false,
+      "ordinary_passport_result": "EVISA_REQUIRED"
+    },
+
+    "turkey": {
+      "country_name": "Türkiye",
+      "country_code": "TR",
+      "visa_status": "VISA_FREE",
+      "passport_types": ["DIPLOMATIC", "SERVICE", "SPECIAL"],
+      "travel_purposes": ["TOURISM", "BUSINESS"],
+      "max_stay_days": 90,
+      "eta_required": false,
+      "evisa_available": true,
+      "embassy_required": false,
+      "border_visa_possible": false,
+      "ordinary_passport_result": "EVISA_REQUIRED"
+    },
+
+    "uganda": {
+      "country_name": "Uganda",
+      "country_code": "UG",
+      "visa_status": "VISA_FREE",
+      "passport_types": ["ORDINARY", "DIPLOMATIC", "SERVICE", "OFFICIAL", "SPECIAL"],
+      "travel_purposes": ["TOURISM", "BUSINESS"],
+      "max_stay_days": 30,
+      "eta_required": false,
+      "evisa_available": true,
+      "embassy_required": false,
+      "border_visa_possible": false
+    },
+
+    "vietnam": {
+      "country_name": "Vietnam",
+      "country_code": "VN",
+      "visa_status": "VISA_FREE",
+      "passport_types": ["DIPLOMATIC", "SERVICE"],
+      "travel_purposes": ["TOURISM", "BUSINESS"],
+      "max_stay_days": 90,
+      "eta_required": false,
+      "evisa_available": true,
+      "embassy_required": false,
+      "border_visa_possible": false,
+      "ordinary_passport_result": "EVISA_REQUIRED"
+    },
+
+    "venezuela": {
+      "country_name": "Venezuela",
+      "country_code": "VE",
+      "visa_status": "VISA_FREE",
+      "passport_types": ["DIPLOMATIC", "SERVICE"],
+      "travel_purposes": ["TOURISM", "BUSINESS"],
+      "max_stay_days": 30,
+      "eta_required": false,
+      "evisa_available": true,
+      "embassy_required": false,
+      "border_visa_possible": false,
+      "ordinary_passport_result": "EVISA_REQUIRED"
+    },
+
+    "zambia": {
+      "country_name": "Zambia",
+      "country_code": "ZM",
+      "visa_status": "VISA_FREE",
+      "passport_types": ["ORDINARY", "DIPLOMATIC", "SERVICE", "OFFICIAL", "SPECIAL"],
+      "travel_purposes": ["TOURISM", "BUSINESS"],
+      "max_stay_days": 30,
+      "eta_required": false,
+      "evisa_available": true,
+      "embassy_required": false,
+      "border_visa_possible": false
+    },
+
+    "zimbabwe": {
+      "country_name": "Zimbabwe",
+      "country_code": "ZW",
+      "visa_status": "VISA_FREE",
+      "passport_types": ["ORDINARY", "DIPLOMATIC", "SERVICE", "OFFICIAL", "SPECIAL"],
+      "travel_purposes": ["TOURISM", "BUSINESS"],
+      "max_stay_days": 30,
+      "eta_required": false,
+      "evisa_available": true,
+      "embassy_required": false,
+      "border_visa_possible": false
+    },
+
+    "belgium": {
+      "country_name": "Belgium",
+      "country_code": "BE",
+      "visa_status": "ETA_REQUIRED",
+      "passport_types": ["ORDINARY", "DIPLOMATIC", "SERVICE", "OFFICIAL", "SPECIAL"],
+      "travel_purposes": ["TOURISM", "BUSINESS"],
+      "max_stay_days": 30,
+      "eta_required": true,
+      "evisa_available": true,
+      "embassy_required": false,
+      "border_visa_possible": false
+    },
+
+    "canada": {
+      "country_name": "Canada",
+      "country_code": "CA",
+      "visa_status": "ETA_REQUIRED",
+      "passport_types": ["ORDINARY", "DIPLOMATIC", "SERVICE", "OFFICIAL", "SPECIAL"],
+      "travel_purposes": ["TOURISM", "BUSINESS"],
+      "max_stay_days": 30,
+      "eta_required": true,
+      "evisa_available": true,
+      "embassy_required": false,
+      "border_visa_possible": false
+    },
+
+    "china": {
+      "country_name": "China",
+      "country_code": "CN",
+      "visa_status": "ETA_REQUIRED",
+      "passport_types": ["ORDINARY", "DIPLOMATIC", "SERVICE", "OFFICIAL", "SPECIAL"],
+      "travel_purposes": ["TOURISM", "BUSINESS"],
+      "max_stay_days": 30,
+      "eta_required": true,
+      "evisa_available": true,
+      "embassy_required": false,
+      "border_visa_possible": false
+    },
+
+    "cote_divoire": {
+      "country_name": "Côte d'Ivoire",
+      "country_code": "CI",
+      "visa_status": "ETA_REQUIRED",
+      "passport_types": ["ORDINARY", "DIPLOMATIC", "SERVICE", "OFFICIAL", "SPECIAL"],
+      "travel_purposes": ["TOURISM", "BUSINESS"],
+      "max_stay_days": 30,
+      "eta_required": true,
+      "evisa_available": true,
+      "embassy_required": false,
+      "border_visa_possible": false
+    },
+
+    "denmark": {
+      "country_name": "Denmark",
+      "country_code": "DK",
+      "visa_status": "ETA_REQUIRED",
+      "passport_types": ["ORDINARY", "DIPLOMATIC", "SERVICE", "OFFICIAL", "SPECIAL"],
+      "travel_purposes": ["TOURISM", "BUSINESS"],
+      "max_stay_days": 30,
+      "eta_required": true,
+      "evisa_available": true,
+      "embassy_required": false,
+      "border_visa_possible": false
+    },
+
+    "finland": {
+      "country_name": "Finland",
+      "country_code": "FI",
+      "visa_status": "ETA_REQUIRED",
+      "passport_types": ["ORDINARY", "DIPLOMATIC", "SERVICE", "OFFICIAL", "SPECIAL"],
+      "travel_purposes": ["TOURISM", "BUSINESS"],
+      "max_stay_days": 30,
+      "eta_required": true,
+      "evisa_available": true,
+      "embassy_required": false,
+      "border_visa_possible": false
+    },
+
+    "france": {
+      "country_name": "France",
+      "country_code": "FR",
+      "visa_status": "ETA_REQUIRED",
+      "passport_types": ["ORDINARY", "DIPLOMATIC", "SERVICE", "OFFICIAL", "SPECIAL"],
+      "travel_purposes": ["TOURISM", "BUSINESS"],
+      "max_stay_days": 30,
+      "eta_required": true,
+      "evisa_available": true,
+      "embassy_required": false,
+      "border_visa_possible": false
+    },
+
+    "germany": {
+      "country_name": "Germany",
+      "country_code": "DE",
+      "visa_status": "ETA_REQUIRED",
+      "passport_types": ["ORDINARY", "DIPLOMATIC", "SERVICE", "OFFICIAL", "SPECIAL"],
+      "travel_purposes": ["TOURISM", "BUSINESS"],
+      "max_stay_days": 30,
+      "eta_required": true,
+      "evisa_available": true,
+      "embassy_required": false,
+      "border_visa_possible": false
+    },
+
+    "ghana": {
+      "country_name": "Ghana",
+      "country_code": "GH",
+      "visa_status": "ETA_REQUIRED",
+      "passport_types": ["ORDINARY", "DIPLOMATIC", "SERVICE", "OFFICIAL", "SPECIAL"],
+      "travel_purposes": ["TOURISM", "BUSINESS"],
+      "max_stay_days": 30,
+      "eta_required": true,
+      "evisa_available": true,
+      "embassy_required": false,
+      "border_visa_possible": false
+    },
+
+    "ireland": {
+      "country_name": "Ireland",
+      "country_code": "IE",
+      "visa_status": "ETA_REQUIRED",
+      "passport_types": ["ORDINARY", "DIPLOMATIC", "SERVICE", "OFFICIAL", "SPECIAL"],
+      "travel_purposes": ["TOURISM", "BUSINESS"],
+      "max_stay_days": 30,
+      "eta_required": true,
+      "evisa_available": true,
+      "embassy_required": false,
+      "border_visa_possible": false
+    },
+
+    "israel": {
+      "country_name": "Israel",
+      "country_code": "IL",
+      "visa_status": "ETA_REQUIRED",
+      "passport_types": ["ORDINARY", "DIPLOMATIC", "SERVICE", "OFFICIAL", "SPECIAL"],
+      "travel_purposes": ["TOURISM", "BUSINESS"],
+      "max_stay_days": 30,
+      "eta_required": true,
+      "evisa_available": true,
+      "embassy_required": false,
+      "border_visa_possible": false
+    },
+
+    "italy": {
+      "country_name": "Italy",
+      "country_code": "IT",
+      "visa_status": "ETA_REQUIRED",
+      "passport_types": ["ORDINARY", "DIPLOMATIC", "SERVICE", "OFFICIAL", "SPECIAL"],
+      "travel_purposes": ["TOURISM", "BUSINESS"],
+      "max_stay_days": 30,
+      "eta_required": true,
+      "evisa_available": true,
+      "embassy_required": false,
+      "border_visa_possible": false
+    },
+
+    "japan": {
+      "country_name": "Japan",
+      "country_code": "JP",
+      "visa_status": "ETA_REQUIRED",
+      "passport_types": ["ORDINARY", "DIPLOMATIC", "SERVICE", "OFFICIAL", "SPECIAL"],
+      "travel_purposes": ["TOURISM", "BUSINESS"],
+      "max_stay_days": 30,
+      "eta_required": true,
+      "evisa_available": true,
+      "embassy_required": false,
+      "border_visa_possible": false
+    },
+
+    "netherlands": {
+      "country_name": "Netherlands",
+      "country_code": "NL",
+      "visa_status": "ETA_REQUIRED",
+      "passport_types": ["ORDINARY", "DIPLOMATIC", "SERVICE", "OFFICIAL", "SPECIAL"],
+      "travel_purposes": ["TOURISM", "BUSINESS"],
+      "max_stay_days": 30,
+      "eta_required": true,
+      "evisa_available": true,
+      "embassy_required": false,
+      "border_visa_possible": false
+    },
+
+    "norway": {
+      "country_name": "Norway",
+      "country_code": "NO",
+      "visa_status": "ETA_REQUIRED",
+      "passport_types": ["ORDINARY", "DIPLOMATIC", "SERVICE", "OFFICIAL", "SPECIAL"],
+      "travel_purposes": ["TOURISM", "BUSINESS"],
+      "max_stay_days": 30,
+      "eta_required": true,
+      "evisa_available": true,
+      "embassy_required": false,
+      "border_visa_possible": false
+    },
+
+    "russia": {
+      "country_name": "Russia",
+      "country_code": "RU",
+      "visa_status": "ETA_REQUIRED",
+      "passport_types": ["ORDINARY", "DIPLOMATIC", "SERVICE", "OFFICIAL", "SPECIAL"],
+      "travel_purposes": ["TOURISM", "BUSINESS"],
+      "max_stay_days": 30,
+      "eta_required": true,
+      "evisa_available": true,
+      "embassy_required": false,
+      "border_visa_possible": false
+    },
+
+    "saudi_arabia": {
+      "country_name": "Saudi Arabia",
+      "country_code": "SA",
+      "visa_status": "ETA_REQUIRED",
+      "passport_types": ["ORDINARY", "DIPLOMATIC", "SERVICE", "OFFICIAL", "SPECIAL"],
+      "travel_purposes": ["TOURISM", "BUSINESS"],
+      "max_stay_days": 30,
+      "eta_required": true,
+      "evisa_available": true,
+      "embassy_required": false,
+      "border_visa_possible": false
+    },
+
+    "senegal": {
+      "country_name": "Senegal",
+      "country_code": "SN",
+      "visa_status": "ETA_REQUIRED",
+      "passport_types": ["ORDINARY", "DIPLOMATIC", "SERVICE", "OFFICIAL", "SPECIAL"],
+      "travel_purposes": ["TOURISM", "BUSINESS"],
+      "max_stay_days": 30,
+      "eta_required": true,
+      "evisa_available": true,
+      "embassy_required": false,
+      "border_visa_possible": false
+    },
+
+    "singapore": {
+      "country_name": "Singapore",
+      "country_code": "SG",
+      "visa_status": "ETA_REQUIRED",
+      "passport_types": ["ORDINARY", "DIPLOMATIC", "SERVICE", "OFFICIAL", "SPECIAL"],
+      "travel_purposes": ["TOURISM", "BUSINESS"],
+      "max_stay_days": 30,
+      "eta_required": true,
+      "evisa_available": true,
+      "embassy_required": false,
+      "border_visa_possible": false
+    },
+
+    "spain": {
+      "country_name": "Spain",
+      "country_code": "ES",
+      "visa_status": "ETA_REQUIRED",
+      "passport_types": ["ORDINARY", "DIPLOMATIC", "SERVICE", "OFFICIAL", "SPECIAL"],
+      "travel_purposes": ["TOURISM", "BUSINESS"],
+      "max_stay_days": 30,
+      "eta_required": true,
+      "evisa_available": true,
+      "embassy_required": false,
+      "border_visa_possible": false
+    },
+
+    "sweden": {
+      "country_name": "Sweden",
+      "country_code": "SE",
+      "visa_status": "ETA_REQUIRED",
+      "passport_types": ["ORDINARY", "DIPLOMATIC", "SERVICE", "OFFICIAL", "SPECIAL"],
+      "travel_purposes": ["TOURISM", "BUSINESS"],
+      "max_stay_days": 30,
+      "eta_required": true,
+      "evisa_available": true,
+      "embassy_required": false,
+      "border_visa_possible": false
+    },
+
+    "switzerland": {
+      "country_name": "Switzerland",
+      "country_code": "CH",
+      "visa_status": "ETA_REQUIRED",
+      "passport_types": ["ORDINARY", "DIPLOMATIC", "SERVICE", "OFFICIAL", "SPECIAL"],
+      "travel_purposes": ["TOURISM", "BUSINESS"],
+      "max_stay_days": 30,
+      "eta_required": true,
+      "evisa_available": true,
+      "embassy_required": false,
+      "border_visa_possible": false
+    },
+
+    "ukraine": {
+      "country_name": "Ukraine",
+      "country_code": "UA",
+      "visa_status": "ETA_REQUIRED",
+      "passport_types": ["ORDINARY", "DIPLOMATIC", "SERVICE", "OFFICIAL", "SPECIAL"],
+      "travel_purposes": ["TOURISM", "BUSINESS"],
+      "max_stay_days": 30,
+      "eta_required": true,
+      "evisa_available": true,
+      "embassy_required": false,
+      "border_visa_possible": false
+    },
+
+    "united_arab_emirates": {
+      "country_name": "United Arab Emirates",
+      "country_code": "AE",
+      "visa_status": "ETA_REQUIRED",
+      "passport_types": ["ORDINARY", "DIPLOMATIC", "SERVICE", "OFFICIAL", "SPECIAL"],
+      "travel_purposes": ["TOURISM", "BUSINESS"],
+      "max_stay_days": 30,
+      "eta_required": true,
+      "evisa_available": true,
+      "embassy_required": false,
+      "border_visa_possible": false
+    },
+
+    "united_kingdom": {
+      "country_name": "United Kingdom",
+      "country_code": "GB",
+      "visa_status": "ETA_REQUIRED",
+      "passport_types": ["ORDINARY", "DIPLOMATIC", "SERVICE", "OFFICIAL", "SPECIAL"],
+      "travel_purposes": ["TOURISM", "BUSINESS"],
+      "max_stay_days": 30,
+      "eta_required": true,
+      "evisa_available": true,
+      "embassy_required": false,
+      "border_visa_possible": false
+    },
+
+    "united_states": {
+      "country_name": "United States",
+      "country_code": "US",
+      "visa_status": "ETA_REQUIRED",
+      "passport_types": ["ORDINARY", "DIPLOMATIC", "SERVICE", "OFFICIAL", "SPECIAL"],
+      "travel_purposes": ["TOURISM", "BUSINESS"],
+      "max_stay_days": 30,
+      "eta_required": true,
+      "evisa_available": true,
+      "embassy_required": false,
+      "border_visa_possible": false
+    },
+
+    "pakistan": {
+      "country_name": "Pakistan",
+      "country_code": "PK",
+      "visa_status": "EMBASSY_REQUIRED",
+      "passport_types": ["ORDINARY", "DIPLOMATIC", "SERVICE", "OFFICIAL", "SPECIAL"],
+      "eta_required": false,
+      "evisa_available": false,
+      "embassy_required": true,
+      "border_visa_possible": "VERIFY",
+      "max_stay_days": null,
+      "message": "Applicants from Pakistan cannot apply for a Mozambique visa through the eVisa portal. Contact the nearest Mozambican embassy or consulate."
+    },
+
+    "bangladesh": {
+      "country_name": "Bangladesh",
+      "country_code": "BD",
+      "visa_status": "EMBASSY_REQUIRED",
+      "passport_types": ["ORDINARY", "DIPLOMATIC", "SERVICE", "OFFICIAL", "SPECIAL"],
+      "eta_required": false,
+      "evisa_available": false,
+      "embassy_required": true,
+      "border_visa_possible": "VERIFY",
+      "max_stay_days": null,
+      "message": "Applicants from Bangladesh cannot apply for a Mozambique visa through the eVisa portal. Contact the nearest Mozambican embassy or consulate."
+    },
+
+    "ethiopia": {
+      "country_name": "Ethiopia",
+      "country_code": "ET",
+      "visa_status": "EMBASSY_REQUIRED",
+      "passport_types": ["ORDINARY", "DIPLOMATIC", "SERVICE", "OFFICIAL", "SPECIAL"],
+      "eta_required": false,
+      "evisa_available": false,
+      "embassy_required": true,
+      "border_visa_possible": "VERIFY",
+      "max_stay_days": null,
+      "message": "Applicants from Ethiopia cannot apply for a Mozambique visa through the eVisa portal. Contact the nearest Mozambican embassy or consulate."
+    },
+
+    "nigeria": {
+      "country_name": "Nigeria",
+      "country_code": "NG",
+      "visa_status": "EMBASSY_REQUIRED",
+      "passport_types": ["ORDINARY", "DIPLOMATIC", "SERVICE", "OFFICIAL", "SPECIAL"],
+      "eta_required": false,
+      "evisa_available": false,
+      "embassy_required": true,
+      "border_visa_possible": "VERIFY",
+      "max_stay_days": null,
+      "message": "Applicants from Nigeria cannot apply for a Mozambique visa through the eVisa portal. Contact the nearest Mozambican embassy or consulate."
+    },
+
+    "nepal": {
+      "country_name": "Nepal",
+      "country_code": "NP",
+      "visa_status": "EMBASSY_REQUIRED",
+      "passport_types": ["ORDINARY", "DIPLOMATIC", "SERVICE", "OFFICIAL", "SPECIAL"],
+      "eta_required": false,
+      "evisa_available": false,
+      "embassy_required": true,
+      "border_visa_possible": "VERIFY",
+      "max_stay_days": null,
+      "message": "Applicants from Nepal cannot apply for a Mozambique visa through the eVisa portal. Contact the nearest Mozambican embassy or consulate."
+    },
+
+    "somalia": {
+      "country_name": "Somalia",
+      "country_code": "SO",
+      "visa_status": "EMBASSY_REQUIRED",
+      "passport_types": ["ORDINARY", "DIPLOMATIC", "SERVICE", "OFFICIAL", "SPECIAL"],
+      "eta_required": false,
+      "evisa_available": false,
+      "embassy_required": true,
+      "border_visa_possible": "VERIFY",
+      "max_stay_days": null,
+      "message": "Applicants from Somalia cannot apply for a Mozambique visa through the eVisa portal. Contact the nearest Mozambican embassy or consulate."
+    }
+  }
+}

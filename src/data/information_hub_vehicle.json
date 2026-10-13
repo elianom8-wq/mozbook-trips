@@ -1,0 +1,85 @@
+{
+  "information_hub": {
+    "category": "Vehicle",
+    "country": "Mozambique",
+    "facts": [
+      {
+        "title": "Driving Requirements in Mozambique",
+        "factType": "Vehicle",
+        "priority": 1,
+        "tags": [
+          "driving",
+          "requirements",
+          "mozambique"
+        ],
+        "description": "To legally drive in Mozambique, you need valid vehicle registration papers, a recognized driver's licence (International or English/SADC preferred), and compulsory third-party insurance (SORCA). If the driver is not the owner, a letter of authorization is required."
+      },
+      {
+        "title": "SORCA Insurance",
+        "factType": "Vehicle",
+        "priority": 2,
+        "tags": [
+          "insurance",
+          "sorca",
+          "vehicle"
+        ],
+        "description": "Foreign-registered vehicles must have SORCA insurance (third-party liability) to enter Mozambique. It is usually valid for 30 days and can be purchased online or at the border."
+      },
+      {
+        "title": "Temporary Import Permit (TIP)",
+        "factType": "Vehicle",
+        "priority": 3,
+        "tags": [
+          "permit",
+          "import",
+          "border"
+        ],
+        "description": "A temporary import permit is required when bringing a foreign vehicle into Mozambique. Officials at the border will stamp it."
+      },
+      {
+        "title": "Vehicle Safety Equipment",
+        "factType": "Vehicle",
+        "priority": 4,
+        "tags": [
+          "safety",
+          "equipment",
+          "vehicle"
+        ],
+        "description": "Recommended equipment includes seat belts for all passengers, reflective triangles, and a fire extinguisher."
+      },
+      {
+        "title": "Importing a Vehicle into Mozambique",
+        "factType": "Vehicle",
+        "priority": 5,
+        "tags": [
+          "import",
+          "registration",
+          "documents"
+        ],
+        "description": "All vehicles must be registered with Mozambique authorities. Required documents include original registration, purchase invoice, Bill of Lading, passport copy, and NUIT. Used vehicles may require pre-shipment inspection."
+      },
+      {
+        "title": "Border Crossing for Vehicles",
+        "factType": "Vehicle",
+        "priority": 6,
+        "tags": [
+          "border",
+          "crossing",
+          "vehicle"
+        ],
+        "description": "To cross into Mozambique with a vehicle: present registration papers, SORCA insurance, temporary import permit, and authorization letters if not the owner. Carry reflective triangles and fire extinguisher."
+      },
+      {
+        "title": "Quick Checklist",
+        "factType": "Vehicle",
+        "priority": 7,
+        "tags": [
+          "checklist",
+          "vehicle",
+          "requirements"
+        ],
+        "description": "Vehicle registration papers; Valid driver's license; SORCA insurance; Temporary import permit (TIP); Owner authorization letter (if needed); Passport and travel docs; Customs/import documents (if importing)."
+      }
+    ]
+  }
+}

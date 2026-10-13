@@ -1,0 +1,1909 @@
+{
+  "entities": {
+    "Listing": {
+      "title": "Listing",
+      "description": "A property listing available for booking.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "location": {
+          "type": "string"
+        },
+        "residenceType": {
+          "type": "string",
+          "enum": [
+            "lodge",
+            "beachfront residence",
+            "apartment home residence",
+            "outdoor residence",
+            "normal residence",
+            "city residence",
+            "country residence",
+            "studio apartment"
+          ]
+        },
+        "price": {
+          "type": "number"
+        },
+        "minNights": {
+          "type": "number"
+        },
+        "rating": {
+          "type": "number"
+        },
+        "images": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "labeledImages": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "url": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "amenities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "hostId": {
+          "type": "string"
+        },
+        "category": {
+          "type": "string"
+        },
+        "city": {
+          "type": "string"
+        },
+        "province": {
+          "type": "string"
+        },
+        "country": {
+          "type": "string"
+        },
+        "availableFrom": {
+          "type": "string"
+        },
+        "availableTo": {
+          "type": "string"
+        },
+        "coordinates": {
+          "type": "object",
+          "properties": {
+            "lat": {
+              "type": "number"
+            },
+            "lng": {
+              "type": "number"
+            }
+          }
+        },
+        "nearbyPlaces": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "category": {
+                "type": "string"
+              },
+              "distance": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "category"
+            ]
+          }
+        },
+        "specialOffer": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "offerType": {
+              "type": "string",
+              "enum": [
+                "percentage",
+                "fixed",
+                "seasonal"
+              ]
+            },
+            "discountPercent": {
+              "type": "number"
+            },
+            "discountAmount": {
+              "type": "number"
+            },
+            "specialPrice": {
+              "type": "number"
+            },
+            "originalPrice": {
+              "type": "number"
+            },
+            "offerName": {
+              "type": "string"
+            },
+            "startDate": {
+              "type": "string"
+            },
+            "endDate": {
+              "type": "string"
+            },
+            "isSeasonal": {
+              "type": "boolean"
+            },
+            "seasonalTag": {
+              "type": "string"
+            },
+            "customSeasonName": {
+              "type": "string"
+            }
+          }
+        },
+        "accommodations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/entities/LodgeAccommodation"
+          }
+        },
+        "totalLodgeUnits": {
+          "type": "number"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "title",
+        "location",
+        "price",
+        "hostId",
+        "residenceType",
+        "city",
+        "province"
+      ]
+    },
+    "LodgeAccommodation": {
+      "title": "LodgeAccommodation",
+      "description": "An accommodation room, suite, or chalet type belonging to a multi-unit lodge.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "listingId": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "customName": {
+          "type": "string"
+        },
+        "units": {
+          "type": "number"
+        },
+        "adults": {
+          "type": "number"
+        },
+        "children": {
+          "type": "number"
+        },
+        "maxGuests": {
+          "type": "number"
+        },
+        "price": {
+          "type": "number"
+        },
+        "currency": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "amenities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "photos": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "active": {
+          "type": "boolean"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "name",
+        "units",
+        "adults",
+        "maxGuests",
+        "price"
+      ]
+    },
+    "SpecialOffer": {
+      "title": "SpecialOffer",
+      "description": "A promotional discount or seasonal pricing configured for a listing.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "listingId": {
+          "type": "string"
+        },
+        "hostId": {
+          "type": "string"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "offerType": {
+          "type": "string",
+          "enum": [
+            "percentage",
+            "fixed",
+            "seasonal"
+          ]
+        },
+        "discountPercent": {
+          "type": "number"
+        },
+        "discountAmount": {
+          "type": "number"
+        },
+        "specialPrice": {
+          "type": "number"
+        },
+        "originalPrice": {
+          "type": "number"
+        },
+        "offerName": {
+          "type": "string"
+        },
+        "startDate": {
+          "type": "string"
+        },
+        "endDate": {
+          "type": "string"
+        },
+        "isSeasonal": {
+          "type": "boolean"
+        },
+        "seasonalTag": {
+          "type": "string"
+        },
+        "customSeasonName": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "listingId",
+        "hostId",
+        "offerType",
+        "specialPrice",
+        "originalPrice",
+        "startDate",
+        "endDate"
+      ]
+    },
+    "CommunityPlace": {
+      "title": "CommunityPlace",
+      "description": "Nearby spot recommendation contributed by hosts.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "category": {
+          "type": "string"
+        },
+        "city": {
+          "type": "string"
+        },
+        "province": {
+          "type": "string"
+        },
+        "distance": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "addedBy": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "name",
+        "category",
+        "city"
+      ]
+    },
+    "HostVerification": {
+      "title": "HostVerification",
+      "description": "Verification documents submitted by host for final approval with AI validity extraction.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "userId": {
+          "type": "string"
+        },
+        "userEmail": {
+          "type": "string"
+        },
+        "hostName": {
+          "type": "string"
+        },
+        "docType": {
+          "type": "string",
+          "enum": [
+            "national_id",
+            "dire",
+            "passport",
+            "residence_permit"
+          ]
+        },
+        "docNumber": {
+          "type": "string"
+        },
+        "docPhotoUrl": {
+          "type": "string"
+        },
+        "docFrontPhotoUrl": {
+          "type": "string"
+        },
+        "docBackPhotoUrl": {
+          "type": "string"
+        },
+        "expiryDate": {
+          "type": "string"
+        },
+        "isExpired": {
+          "type": "boolean"
+        },
+        "daysUntilExpiry": {
+          "type": "number"
+        },
+        "expiryStatus": {
+          "type": "string",
+          "enum": [
+            "valid",
+            "expiring_soon",
+            "expired"
+          ]
+        },
+        "issueDate": {
+          "type": "string"
+        },
+        "dateOfBirth": {
+          "type": "string"
+        },
+        "nationality": {
+          "type": "string"
+        },
+        "phoneNumber": {
+          "type": "string"
+        },
+        "utilityBillUrl": {
+          "type": "string"
+        },
+        "utilityBillAddress": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "verified",
+            "rejected"
+          ]
+        },
+        "adminNotes": {
+          "type": "string"
+        },
+        "extractedData": {
+          "type": "object"
+        },
+        "expiryReminderSent": {
+          "type": "boolean"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "reviewedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "userId",
+        "hostName",
+        "docType",
+        "docNumber",
+        "phoneNumber",
+        "status"
+      ]
+    },
+    "Booking": {
+      "title": "Booking",
+      "description": "A reservation for a stay or property listing.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "bookingRef": {
+          "type": "string"
+        },
+        "listingId": {
+          "type": "string"
+        },
+        "listingTitle": {
+          "type": "string"
+        },
+        "listingCity": {
+          "type": "string"
+        },
+        "listingLocation": {
+          "type": "string"
+        },
+        "listingImage": {
+          "type": "string"
+        },
+        "hostId": {
+          "type": "string"
+        },
+        "userId": {
+          "type": "string"
+        },
+        "customerName": {
+          "type": "string"
+        },
+        "customerEmail": {
+          "type": "string"
+        },
+        "customerPhone": {
+          "type": "string"
+        },
+        "startDate": {
+          "type": "string"
+        },
+        "endDate": {
+          "type": "string"
+        },
+        "checkInDate": {
+          "type": "string"
+        },
+        "checkOutDate": {
+          "type": "string"
+        },
+        "nights": {
+          "type": "number"
+        },
+        "nightlyRate": {
+          "type": "number"
+        },
+        "adults": {
+          "type": "number"
+        },
+        "children": {
+          "type": "number"
+        },
+        "totalGuests": {
+          "type": "number"
+        },
+        "cleaningFee": {
+          "type": "number"
+        },
+        "serviceFee": {
+          "type": "number"
+        },
+        "totalAmount": {
+          "type": "number"
+        },
+        "currency": {
+          "type": "string",
+          "enum": [
+            "MZN"
+          ]
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "confirmed",
+            "cancelled",
+            "completed"
+          ]
+        },
+        "paymentStatus": {
+          "type": "string",
+          "enum": [
+            "unpaid",
+            "pending",
+            "paid",
+            "failed",
+            "refunded"
+          ]
+        },
+        "fulfillmentStatus": {
+          "type": "string",
+          "enum": [
+            "unfulfilled",
+            "ready",
+            "checked_in",
+            "redeemed",
+            "completed"
+          ]
+        },
+        "travelGroupId": {
+          "type": "string"
+        },
+        "accommodationId": {
+          "type": "string"
+        },
+        "accommodationName": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "listingId",
+        "userId",
+        "startDate",
+        "endDate",
+        "totalAmount"
+      ]
+    },
+    "ActivityTrip": {
+      "title": "ActivityTrip",
+      "description": "An activity, excursion, trip, or tour hosted by an experience provider.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "hostId": {
+          "type": "string"
+        },
+        "hostName": {
+          "type": "string"
+        },
+        "hostEmail": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "activity",
+            "trip"
+          ]
+        },
+        "title": {
+          "type": "string"
+        },
+        "shortDescription": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "category": {
+          "type": "string"
+        },
+        "city": {
+          "type": "string"
+        },
+        "meetingPoint": {
+          "type": "string"
+        },
+        "meetingPointInstructions": {
+          "type": "string"
+        },
+        "coordinates": {
+          "type": "object",
+          "properties": {
+            "lat": {
+              "type": "number"
+            },
+            "lng": {
+              "type": "number"
+            }
+          }
+        },
+        "pickup": {
+          "type": "object",
+          "properties": {
+            "offered": {
+              "type": "boolean"
+            },
+            "areas": {
+              "type": "string"
+            },
+            "location": {
+              "type": "string"
+            },
+            "instructions": {
+              "type": "string"
+            },
+            "fee": {
+              "type": "number"
+            }
+          }
+        },
+        "duration": {
+          "type": "string"
+        },
+        "multiDayDetails": {
+          "type": "object",
+          "properties": {
+            "days": {
+              "type": "number"
+            },
+            "nights": {
+              "type": "number"
+            }
+          }
+        },
+        "scheduleType": {
+          "type": "string",
+          "enum": [
+            "specific_dates",
+            "recurring",
+            "flexible"
+          ]
+        },
+        "recurringDays": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "startTimes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "specificDates": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "maxGuests": {
+          "type": "number"
+        },
+        "minGuests": {
+          "type": "number"
+        },
+        "pricingType": {
+          "type": "string",
+          "enum": [
+            "per_person",
+            "per_group",
+            "per_booking"
+          ]
+        },
+        "priceAdult": {
+          "type": "number"
+        },
+        "priceChild": {
+          "type": "number"
+        },
+        "priceGroup": {
+          "type": "number"
+        },
+        "groupMaxGuests": {
+          "type": "number"
+        },
+        "pricePerBooking": {
+          "type": "number"
+        },
+        "currency": {
+          "type": "string"
+        },
+        "specialOffer": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "discountPercent": {
+              "type": "number"
+            },
+            "specialPrice": {
+              "type": "number"
+            },
+            "offerName": {
+              "type": "string"
+            },
+            "startDate": {
+              "type": "string"
+            },
+            "endDate": {
+              "type": "string"
+            },
+            "seasonalTag": {
+              "type": "string"
+            }
+          }
+        },
+        "images": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "coverImage": {
+          "type": "string"
+        },
+        "videos": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "included": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "notIncluded": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "whatToBring": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "requirements": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "draft",
+            "pending",
+            "published",
+            "paused"
+          ]
+        },
+        "rating": {
+          "type": "number"
+        },
+        "reviewsCount": {
+          "type": "number"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "hostId",
+        "type",
+        "title",
+        "category",
+        "city",
+        "duration",
+        "maxGuests",
+        "pricingType"
+      ]
+    },
+    "ActivityBooking": {
+      "title": "ActivityBooking",
+      "description": "A reservation for an activity or trip excursion.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "activityId": {
+          "type": "string"
+        },
+        "activityTitle": {
+          "type": "string"
+        },
+        "activityType": {
+          "type": "string",
+          "enum": [
+            "activity",
+            "trip"
+          ]
+        },
+        "city": {
+          "type": "string"
+        },
+        "hostId": {
+          "type": "string"
+        },
+        "customerName": {
+          "type": "string"
+        },
+        "customerEmail": {
+          "type": "string"
+        },
+        "customerPhone": {
+          "type": "string"
+        },
+        "date": {
+          "type": "string"
+        },
+        "time": {
+          "type": "string"
+        },
+        "adults": {
+          "type": "number"
+        },
+        "children": {
+          "type": "number"
+        },
+        "totalGuests": {
+          "type": "number"
+        },
+        "pricingType": {
+          "type": "string"
+        },
+        "totalMzn": {
+          "type": "number"
+        },
+        "pickupRequested": {
+          "type": "boolean"
+        },
+        "pickupNotes": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "confirmed",
+            "cancelled",
+            "completed"
+          ]
+        },
+        "paymentStatus": {
+          "type": "string",
+          "enum": [
+            "unpaid",
+            "pending",
+            "paid",
+            "failed",
+            "refunded"
+          ]
+        },
+        "fulfillmentStatus": {
+          "type": "string",
+          "enum": [
+            "unfulfilled",
+            "ready",
+            "checked_in",
+            "redeemed",
+            "completed"
+          ]
+        },
+        "bookingRef": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "activityId",
+        "activityTitle",
+        "customerName",
+        "customerPhone",
+        "date",
+        "totalGuests",
+        "totalMzn"
+      ]
+    },
+    "Payment": {
+      "title": "Payment",
+      "description": "An immutable transaction record in the MozBook payment ledger.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "bookingId": {
+          "type": "string"
+        },
+        "bookingCategory": {
+          "type": "string",
+          "enum": [
+            "stay",
+            "activity",
+            "trip"
+          ]
+        },
+        "bookingRef": {
+          "type": "string"
+        },
+        "payerUserId": {
+          "type": "string"
+        },
+        "payerName": {
+          "type": "string"
+        },
+        "payerEmail": {
+          "type": "string"
+        },
+        "payerPhone": {
+          "type": "string"
+        },
+        "hostId": {
+          "type": "string"
+        },
+        "travelGroupId": {
+          "type": "string"
+        },
+        "amount": {
+          "type": "number"
+        },
+        "currency": {
+          "type": "string",
+          "enum": [
+            "MZN"
+          ]
+        },
+        "paymentMethod": {
+          "type": "string",
+          "enum": [
+            "credit_card",
+            "mpesa",
+            "emola"
+          ]
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "unpaid",
+            "pending",
+            "paid",
+            "failed",
+            "refunded"
+          ]
+        },
+        "checkoutUrl": {
+          "type": "string"
+        },
+        "paysuitePaymentId": {
+          "type": "string"
+        },
+        "paysuiteContactId": {
+          "type": "string"
+        },
+        "paysuiteTransactionId": {
+          "type": "string"
+        },
+        "idempotencyKey": {
+          "type": "string"
+        },
+        "webhookReceivedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "webhookRequestId": {
+          "type": "string"
+        },
+        "verifiedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "failureReason": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "bookingId",
+        "bookingCategory",
+        "bookingRef",
+        "payerUserId",
+        "amount",
+        "currency",
+        "status",
+        "idempotencyKey"
+      ]
+    },
+    "PayoutRequest": {
+      "title": "PayoutRequest",
+      "description": "A withdrawal request for verified host earnings.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "hostId": {
+          "type": "string"
+        },
+        "hostName": {
+          "type": "string"
+        },
+        "amount": {
+          "type": "number"
+        },
+        "currency": {
+          "type": "string",
+          "enum": [
+            "MZN"
+          ]
+        },
+        "reference": {
+          "type": "string"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "mpesa",
+            "emola",
+            "mkesh",
+            "bank",
+            "bank_transfer"
+          ]
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "completed",
+            "failed",
+            "cancelled"
+          ]
+        },
+        "paysuitePayoutId": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "requestedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "completedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "hostId",
+        "amount",
+        "currency",
+        "reference",
+        "method",
+        "status"
+      ]
+    },
+    "User": {
+      "title": "User",
+      "description": "A user of the platform.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string"
+        },
+        "email": {
+          "type": "string"
+        },
+        "displayName": {
+          "type": "string"
+        },
+        "photoURL": {
+          "type": "string"
+        },
+        "role": {
+          "type": "string",
+          "enum": [
+            "guest",
+            "host",
+            "admin"
+          ]
+        },
+        "paysuiteContactId": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "uid",
+        "email"
+      ]
+    },
+    "TravelGroup": {
+      "title": "TravelGroup",
+      "description": "A travel group for shared planning, itineraries, and companion coordination.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "ownerId": {
+          "type": "string"
+        },
+        "ownerName": {
+          "type": "string"
+        },
+        "ownerEmail": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "destination": {
+          "type": "string"
+        },
+        "startDate": {
+          "type": "string"
+        },
+        "endDate": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "active",
+            "upcoming",
+            "completed",
+            "archived"
+          ]
+        },
+        "membersCount": {
+          "type": "number"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "ownerId",
+        "name",
+        "destination",
+        "startDate",
+        "endDate"
+      ]
+    },
+    "GroupMember": {
+      "title": "GroupMember",
+      "description": "Membership record associating a user with a travel group.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "groupId": {
+          "type": "string"
+        },
+        "userId": {
+          "type": "string"
+        },
+        "displayName": {
+          "type": "string"
+        },
+        "email": {
+          "type": "string"
+        },
+        "photoURL": {
+          "type": "string"
+        },
+        "role": {
+          "type": "string",
+          "enum": [
+            "owner",
+            "member"
+          ]
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "invited",
+            "active",
+            "declined",
+            "left",
+            "removed"
+          ]
+        },
+        "joinedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "leftAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "invitedBy": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "groupId",
+        "userId",
+        "role",
+        "status"
+      ]
+    },
+    "GroupInvitation": {
+      "title": "GroupInvitation",
+      "description": "Invitation record sent to a user or contact to join a travel group.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "groupId": {
+          "type": "string"
+        },
+        "groupName": {
+          "type": "string"
+        },
+        "groupDestination": {
+          "type": "string"
+        },
+        "groupStartDate": {
+          "type": "string"
+        },
+        "groupEndDate": {
+          "type": "string"
+        },
+        "inviterId": {
+          "type": "string"
+        },
+        "inviterName": {
+          "type": "string"
+        },
+        "inviteeIdentifier": {
+          "type": "string"
+        },
+        "token": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "accepted",
+            "declined",
+            "expired"
+          ]
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "acceptedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "declinedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "groupId",
+        "inviterId",
+        "inviteeIdentifier",
+        "token",
+        "status"
+      ]
+    },
+    "TravelGroupBooking": {
+      "title": "TravelGroupBooking",
+      "description": "Relational link connecting a private travel group to an accommodation or activity reservation.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "groupId": {
+          "type": "string"
+        },
+        "bookingId": {
+          "type": "string"
+        },
+        "bookingCategory": {
+          "type": "string",
+          "enum": [
+            "stay",
+            "activity",
+            "trip"
+          ]
+        },
+        "bookingRef": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "city": {
+          "type": "string"
+        },
+        "location": {
+          "type": "string"
+        },
+        "image": {
+          "type": "string"
+        },
+        "dateOrStartDate": {
+          "type": "string"
+        },
+        "endDate": {
+          "type": "string"
+        },
+        "time": {
+          "type": "string"
+        },
+        "totalAmount": {
+          "type": "number"
+        },
+        "currency": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "paymentStatus": {
+          "type": "string"
+        },
+        "fulfillmentStatus": {
+          "type": "string"
+        },
+        "createdByUserId": {
+          "type": "string"
+        },
+        "createdByName": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "participants": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "userId": {
+                "type": "string"
+              },
+              "displayName": {
+                "type": "string"
+              },
+              "email": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "included",
+                  "opted_out"
+                ]
+              }
+            },
+            "required": [
+              "userId",
+              "displayName",
+              "status"
+            ]
+          }
+        },
+        "notes": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "groupId",
+        "bookingId",
+        "bookingCategory",
+        "bookingRef",
+        "title",
+        "dateOrStartDate",
+        "totalAmount",
+        "createdByUserId"
+      ]
+    },
+    "AdminAuditLog": {
+      "title": "AdminAuditLog",
+      "description": "Administrative actions and operations audit event trail.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "adminUserId": {
+          "type": "string"
+        },
+        "adminEmail": {
+          "type": "string"
+        },
+        "action": {
+          "type": "string"
+        },
+        "module": {
+          "type": "string"
+        },
+        "targetType": {
+          "type": "string"
+        },
+        "targetId": {
+          "type": "string"
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "authProvider": {
+          "type": "string"
+        },
+        "metadata": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "adminUserId",
+        "adminEmail",
+        "action",
+        "module",
+        "timestamp"
+      ]
+    },
+    "RefundRecord": {
+      "title": "RefundRecord",
+      "description": "Authoritative refund tracking record reconciling provider status.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "paymentId": {
+          "type": "string"
+        },
+        "paysuitePaymentId": {
+          "type": "string"
+        },
+        "bookingId": {
+          "type": "string"
+        },
+        "bookingRef": {
+          "type": "string"
+        },
+        "bookingCategory": {
+          "type": "string"
+        },
+        "hostId": {
+          "type": "string"
+        },
+        "requestedByUserId": {
+          "type": "string"
+        },
+        "amount": {
+          "type": "number"
+        },
+        "currency": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "paymentId",
+        "bookingId",
+        "amount",
+        "status"
+      ]
+    },
+    "OperatorInventoryDebit": {
+      "title": "OperatorInventoryDebit",
+      "description": "Platform accountability adjustment for operator overbooking or inventory failures.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "hostId": {
+          "type": "string"
+        },
+        "bookingId": {
+          "type": "string"
+        },
+        "customerRefundAmountMzn": {
+          "type": "number"
+        },
+        "debitAmountMzn": {
+          "type": "number"
+        },
+        "status": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "hostId",
+        "bookingId",
+        "debitAmountMzn",
+        "status"
+      ]
+    },
+    "ExperienceInventorySlot": {
+      "title": "ExperienceInventorySlot",
+      "description": "Atomic concurrency inventory ledger for experience and tour dates.",
+      "type": "object",
+      "properties": {
+        "activityId": {
+          "type": "string"
+        },
+        "date": {
+          "type": "string"
+        },
+        "confirmedSeats": {
+          "type": "number"
+        },
+        "holds": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "activityId",
+        "date"
+      ]
+    },
+    "StayInventorySlot": {
+      "title": "StayInventorySlot",
+      "description": "Atomic concurrency inventory ledger for accommodation nights.",
+      "type": "object",
+      "properties": {
+        "listingId": {
+          "type": "string"
+        },
+        "date": {
+          "type": "string"
+        },
+        "confirmedUnits": {
+          "type": "number"
+        },
+        "holds": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "listingId",
+        "date"
+      ]
+    },
+    "Conversation": {
+      "title": "Conversation",
+      "description": "Direct guest\u2013host chat conversation between travelers and hosts.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "participantIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "participants": {
+          "type": "object"
+        },
+        "guestId": {
+          "type": "string"
+        },
+        "guestName": {
+          "type": "string"
+        },
+        "hostId": {
+          "type": "string"
+        },
+        "hostName": {
+          "type": "string"
+        },
+        "listingId": {
+          "type": "string"
+        },
+        "listingTitle": {
+          "type": "string"
+        },
+        "bookingId": {
+          "type": "string"
+        },
+        "bookingRef": {
+          "type": "string"
+        },
+        "lastMessageText": {
+          "type": "string"
+        },
+        "lastMessageTimestamp": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "lastMessageSenderId": {
+          "type": "string"
+        },
+        "unreadCount": {
+          "type": "object"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "participantIds",
+        "guestId",
+        "hostId"
+      ]
+    },
+    "Message": {
+      "title": "Message",
+      "description": "An individual message sent within a guest\u2013host conversation.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "conversationId": {
+          "type": "string"
+        },
+        "senderId": {
+          "type": "string"
+        },
+        "senderName": {
+          "type": "string"
+        },
+        "senderRole": {
+          "type": "string",
+          "enum": [
+            "guest",
+            "host",
+            "admin"
+          ]
+        },
+        "text": {
+          "type": "string"
+        },
+        "read": {
+          "type": "boolean"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "timestampMs": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "conversationId",
+        "senderId",
+        "text"
+      ]
+    }
+  },
+  "firestore": {
+    "/listings/{listingId}": {
+      "schema": "Listing",
+      "description": "Collection of all property listings."
+    },
+    "/community_places/{placeId}": {
+      "schema": "CommunityPlace",
+      "description": "Crowdsourced nearby attraction recommendations."
+    },
+    "/verifications/{verificationId}": {
+      "schema": "HostVerification",
+      "description": "Host identity and address documents submitted for approval."
+    },
+    "/bookings/{bookingId}": {
+      "schema": "Booking",
+      "description": "Collection of all reservations."
+    },
+    "/special_offers/{offerId}": {
+      "schema": "SpecialOffer",
+      "description": "Collection of promotional offers and seasonal pricing records."
+    },
+    "/activities_trips/{activityId}": {
+      "schema": "ActivityTrip",
+      "description": "Collection of host-created activities, excursions, and trips."
+    },
+    "/activity_bookings/{bookingId}": {
+      "schema": "ActivityBooking",
+      "description": "Reservations placed by guests for activities and trips."
+    },
+    "/travel_groups/{groupId}": {
+      "schema": "TravelGroup",
+      "description": "Collection of travel companion groups."
+    },
+    "/group_members/{memberId}": {
+      "schema": "GroupMember",
+      "description": "Membership records for travel groups."
+    },
+    "/group_invitations/{invitationId}": {
+      "schema": "GroupInvitation",
+      "description": "Invitations sent to join travel groups."
+    },
+    "/travel_group_bookings/{linkId}": {
+      "schema": "TravelGroupBooking",
+      "description": "Relational link associating a private travel group with an accommodation or activity reservation."
+    },
+    "/admin_audit_logs/{logId}": {
+      "schema": "AdminAuditLog",
+      "description": "Collection of administrator audit trail logs."
+    },
+    "/payments/{paymentId}": {
+      "schema": "Payment",
+      "description": "Collection of immutable customer payment ledger transactions."
+    },
+    "/payout_requests/{payoutId}": {
+      "schema": "PayoutRequest",
+      "description": "Collection of host earnings payout requests."
+    },
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Collection of user profiles."
+    },
+    "/operator_inventory_debits/{debitId}": {
+      "schema": "OperatorInventoryDebit",
+      "description": "Ledger of operator debits for inventory representations and overbooking failures."
+    },
+    "/refunds/{refundId}": {
+      "schema": "RefundRecord",
+      "description": "Collection of customer refund requests and settlement statuses."
+    },
+    "/inventory_experience_slots/{slotId}": {
+      "schema": "ExperienceInventorySlot",
+      "description": "Atomic reservation slot ledgers for activities and tours."
+    },
+    "/inventory_stay_slots/{slotId}": {
+      "schema": "StayInventorySlot",
+      "description": "Atomic reservation slot ledgers for accommodation dates."
+    },
+    "/conversations/{conversationId}": {
+      "schema": "Conversation",
+      "description": "Collection of guest\u2013host direct chat threads."
+    },
+    "/conversations/{conversationId}/messages/{messageId}": {
+      "schema": "Message",
+      "description": "Subcollection of real-time messages within a conversation."
+    }
+  }
+}

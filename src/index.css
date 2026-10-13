@@ -1,0 +1,46 @@
+@import "tailwindcss";
+
+@theme {
+  --color-brand: #009A60;
+  --color-brand-hover: #008250;
+  --color-brand-light: #e6f7f0;
+  --color-brand-dark: #006b42;
+}
+
+/* Ensure position: fixed elements stay anchored to the viewport across mobile and tablet */
+html, body {
+  min-height: 100%;
+  margin: 0;
+  padding: 0;
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Offset on-page section targets so they are never obscured by sticky headers */
+[id] {
+  scroll-margin-top: 5.5rem;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+/* Hard-lock floating bar to the viewport window */
+#mozbook-floating-quickbar-root {
+  position: fixed !important;
+  bottom: max(1rem, env(safe-area-inset-bottom, 1rem)) !important;
+  left: 0 !important;
+  right: 0 !important;
+  z-index: 99999 !important;
+  display: flex !important;
+  justify-content: center !important;
+  align-items: center !important;
+  pointer-events: none !important;
+  transform: translate3d(0, 0, 0) !important;
+  -webkit-transform: translate3d(0, 0, 0) !important;
+  will-change: transform !important;
+}
+
+#mozbook-floating-quickbar-root > * {
+  pointer-events: auto !important;
+}

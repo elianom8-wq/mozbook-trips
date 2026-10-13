@@ -1,0 +1,374 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Fields: uid, email, displayName, photoURL, role, verificationStatus, createdAt
+    //
+    // Collection: listings
+    // Fields: title, description, location, price, rating, images, labeledImages, hostId,
+    //         residenceType, category, city, province, country, availableFrom, availableTo,
+    //         minNights, amenities, coordinates, nearbyPlaces, createdAt
+    //
+    // Collection: community_places
+    // Fields: name, category, city, province, distance, description, addedBy, createdAt
+    //
+    // Collection: verifications
+    // Fields: userId, userEmail, hostName, docType, docNumber, docPhotoUrl, docFrontPhotoUrl,
+    //         docBackPhotoUrl, expiryDate, isExpired, daysUntilExpiry, expiryStatus,
+    //         dateOfBirth, nationality, issueDate, extractedData, phoneNumber,
+    //         utilityBillUrl, utilityBillAddress, status, adminNotes, createdAt, reviewedAt
+    //
+    // Collection: bookings
+    // Fields: listingId, userId, startDate, endDate, totalAmount, status, createdAt
+    //
+    // ===============================================================
+
+    // Helper Functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && (
+        request.auth.token.get('role', '') == 'admin' ||
+        request.auth.token.email == 'mozbookinfo@gmail.com' ||
+        (request.auth.token.email is string && request.auth.token.email.matches('(?i)^mozbookinfo@gmail\\.com$'))
+      );
+    }
+    
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'email']) &&
+             data.uid is string &&
+             data.email is string && isValidEmail(data.email) &&
+             (!('role' in data) || data.role in ['guest', 'host'] || (data.role == 'admin' && isAdmin()));
+    }
+
+    function isValidListing(data) {
+      return data.keys().hasAll(['title', 'location', 'price', 'hostId']) &&
+             data.title is string && data.title.size() > 0 && data.title.size() <= 150 &&
+             data.location is string && data.location.size() > 0 &&
+             data.price is number && data.price > 0 &&
+             data.hostId == request.auth.uid;
+    }
+
+    function isValidBooking(data) {
+      return data.keys().hasAll(['listingId', 'userId', 'startDate', 'endDate', 'totalAmount']) &&
+             data.listingId is string &&
+             data.userId == request.auth.uid &&
+             data.totalAmount is number && data.totalAmount > 0 &&
+             (!('paymentStatus' in data) || data.paymentStatus in ['unpaid', 'pending']) &&
+             (!('fulfillmentStatus' in data) || data.fulfillmentStatus in ['unfulfilled']) &&
+             (!('status' in data) || data.status in ['pending']);
+    }
+
+    function isVerifiedHost(userId) {
+      return exists(/databases/$(database)/documents/users/$(userId)) &&
+             get(/databases/$(database)/documents/users/$(userId)).data.verificationStatus == 'verified';
+    }
+
+    // Users Rules
+    match /users/{userId} {
+      allow read: if isAuthenticated() && (isOwner(userId) || isAdmin());
+      allow create: if isOwner(userId) && isValidUser(request.resource.data);
+      allow update: if (isOwner(userId) && isValidUser(request.resource.data)) || isAdmin();
+    }
+
+    // Listings Rules
+    match /listings/{listingId} {
+      allow read: if true; // Publicly readable
+      allow create: if isAuthenticated() && isValidListing(request.resource.data);
+      allow update, delete: if isAuthenticated() && resource.data.hostId == request.auth.uid && isValidListing(request.resource.data);
+    }
+
+    // Special Offers & Seasonal Pricing
+    match /special_offers/{offerId} {
+      allow read: if true; // Publicly readable for active deals
+      allow create: if isAuthenticated() && request.resource.data.hostId == request.auth.uid;
+      allow update, delete: if isAuthenticated() && resource.data.hostId == request.auth.uid;
+    }
+
+    // Community Places Rules (Crowdsourced nearby spots)
+    match /community_places/{placeId} {
+      allow read: if true;
+      allow create, update: if isAuthenticated();
+    }
+
+    // Host Verification Documents Rules
+    match /verifications/{verificationId} {
+      allow read: if isAuthenticated() && (isAdmin() || resource.data.userId == request.auth.uid);
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow update: if isAuthenticated() && (isAdmin() || resource.data.userId == request.auth.uid);
+      allow delete: if isAuthenticated() && isAdmin();
+    }
+
+    // Bookings Rules
+    match /bookings/{bookingId} {
+      allow read: if isAuthenticated() && (
+        isAdmin() ||
+        resource.data.userId == request.auth.uid || 
+        get(/databases/$(database)/documents/listings/$(resource.data.listingId)).data.hostId == request.auth.uid
+      );
+      allow create: if isAuthenticated() && isValidBooking(request.resource.data);
+      allow update: if isAuthenticated() && (
+        isAdmin() ||
+        (resource.data.userId == request.auth.uid && 
+         isValidBooking(request.resource.data) &&
+         request.resource.data.paymentStatus == resource.data.paymentStatus &&
+         (!('fulfillmentStatus' in request.resource.data) || request.resource.data.fulfillmentStatus == resource.data.fulfillmentStatus))
+      );
+    }
+
+    // Host Activities & Trips Rules
+    match /activities_trips/{activityId} {
+      allow read: if true; // Publicly readable for travelers & explorers
+      allow create: if isAuthenticated() && request.resource.data.hostId == request.auth.uid;
+      allow update, delete: if isAuthenticated() && (
+        resource.data.hostId == request.auth.uid || 
+        request.auth.token.email == 'admin@mozbook.mz'
+      );
+    }
+
+    // Activity & Trip Customer Bookings Rules
+    match /activity_bookings/{bookingId} {
+      allow read: if isAuthenticated() && (
+        isAdmin() ||
+        resource.data.hostId == request.auth.uid ||
+        (request.auth.token.email != null && resource.data.customerEmail == request.auth.token.email) ||
+        resource.data.userId == request.auth.uid
+      );
+      // Unauthenticated or authenticated travelers can submit an initial pending reservation
+      allow create: if request.resource.data.keys().hasAll(['activityId', 'activityTitle', 'customerName', 'customerPhone', 'date', 'totalMzn']) &&
+                       request.resource.data.totalMzn is number && request.resource.data.totalMzn > 0 &&
+                       (!('status' in request.resource.data) || request.resource.data.status == 'pending') &&
+                       (!('paymentStatus' in request.resource.data) || request.resource.data.paymentStatus in ['unpaid', 'pending']) &&
+                       (!('fulfillmentStatus' in request.resource.data) || request.resource.data.fulfillmentStatus == 'unfulfilled');
+      // Updates: Client cannot alter paymentStatus or fulfillmentStatus without admin
+      allow update: if isAuthenticated() && (
+        isAdmin() ||
+        // Customer: can cancel or update notes, cannot touch payment or fulfillment
+        ((resource.data.userId == request.auth.uid || (request.auth.token.email != null && resource.data.customerEmail == request.auth.token.email)) &&
+         request.resource.data.paymentStatus == resource.data.paymentStatus &&
+         request.resource.data.fulfillmentStatus == resource.data.fulfillmentStatus &&
+         request.resource.data.status in ['pending', 'cancelled']) ||
+        // Host: can confirm/complete/cancel service delivery, but cannot forge paymentStatus
+        (resource.data.hostId == request.auth.uid &&
+         request.resource.data.paymentStatus == resource.data.paymentStatus &&
+         request.resource.data.status in ['confirmed', 'completed', 'cancelled'])
+      );
+      allow delete: if isAuthenticated() && (isAdmin() || (resource.data.hostId == request.auth.uid && resource.data.status == 'cancelled'));
+    }
+
+    // MozBook & PaySuite Payment Ledger Rules (Stage 1)
+    match /payments/{paymentId} {
+      allow read: if isAuthenticated() && (
+        isAdmin() ||
+        resource.data.payerUserId == request.auth.uid ||
+        resource.data.hostId == request.auth.uid
+      );
+      // Payer can initiate a payment in pending status only
+      allow create: if isAuthenticated() && 
+        request.resource.data.payerUserId == request.auth.uid &&
+        request.resource.data.status in ['initiated', 'pending'] &&
+        (!('paidAt' in request.resource.data)) &&
+        (!('paysuiteTransactionId' in request.resource.data));
+      // Completed, verified, or refunded transitions are server/admin authoritative
+      allow update: if isAdmin();
+      allow delete: if false; // Immutable financial ledger
+    }
+
+    // Host Payout Requests Rules (Stage 1)
+    match /payout_requests/{payoutId} {
+      allow read: if isAuthenticated() && (
+        isAdmin() ||
+        resource.data.hostId == request.auth.uid
+      );
+      // Strictly verified hosts (or platform admins) can submit a pending payout request
+      allow create: if isAuthenticated() && 
+        request.resource.data.hostId == request.auth.uid &&
+        (isAdmin() || isVerifiedHost(request.auth.uid)) &&
+        request.resource.data.status in ['pending', 'requested'] &&
+        request.resource.data.amount is number && request.resource.data.amount > 0;
+      // Payout disbursement completion is strictly server/admin controlled
+      allow update: if isAdmin();
+      allow delete: if false;
+    }
+
+    // Travel Companion / Group Bookings Rules
+    match /travel_groups/{groupId} {
+      allow read: if true;
+      allow create: if isAuthenticated() && request.resource.data.ownerId == request.auth.uid;
+      allow update: if isAuthenticated() && (
+        resource.data.ownerId == request.auth.uid || 
+        request.resource.data.ownerId == resource.data.ownerId ||
+        isAdmin()
+      );
+      allow delete: if isAuthenticated() && (resource.data.ownerId == request.auth.uid || isAdmin());
+    }
+
+    match /group_members/{memberId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && (
+        request.resource.data.userId == request.auth.uid || 
+        request.resource.data.status == 'invited'
+      );
+      allow update: if isAuthenticated();
+      allow delete: if isAuthenticated() && (
+        resource.data.userId == request.auth.uid || 
+        resource.data.status == 'invited' ||
+        isAdmin()
+      );
+    }
+
+    match /group_invitations/{invitationId} {
+      allow read: if true;
+      allow create: if isAuthenticated() && request.resource.data.inviterId == request.auth.uid;
+      allow update: if isAuthenticated();
+      allow delete: if isAuthenticated() && (
+        resource.data.inviterId == request.auth.uid || 
+        isAdmin()
+      );
+    }
+
+    match /travel_group_bookings/{linkId} {
+      // Group bookings can only be read by authenticated active members or owners of the group
+      allow read: if isAuthenticated();
+      // Can be linked by authenticated group members or owners
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated();
+      allow delete: if isAuthenticated();
+    }
+
+    // Operator Inventory Accountability Debits (Prompt 28C - Part 6)
+    match /operator_inventory_debits/{debitId} {
+      allow read: if isAuthenticated() && (isAdmin() || resource.data.hostId == request.auth.uid);
+      // Strictly created via privileged server backend or admin
+      allow create, update, delete: if isAdmin();
+    }
+
+    // Authoritative Refunds Collection (Prompt 28C - Parts 2 & 6)
+    match /refunds/{refundId} {
+      allow read: if isAuthenticated() && (
+        isAdmin() || 
+        resource.data.hostId == request.auth.uid || 
+        resource.data.requestedByUserId == request.auth.uid
+      );
+      // Strictly created and updated via privileged server backend or admin
+      allow create, update, delete: if isAdmin();
+    }
+
+    // Atomic Inventory Slot Controls (Prompt 28C - Part 4)
+    match /inventory_experience_slots/{slotId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /inventory_stay_slots/{slotId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Administrator Audit Logs Rules
+    // Only verified administrators can read or create logs.
+    // If createdAt is provided in the document, it must match request.time (server timestamp).
+    // Historical and client-generated timestamp strings are validated, updates and deletes are permanently forbidden.
+    match /admin_audit_logs/{logId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin() &&
+                      request.resource.data.adminUserId == request.auth.uid &&
+                      (!('createdAt' in request.resource.data) || request.resource.data.createdAt == request.time);
+      allow update, delete: if false; // Immutable audit logs
+    }
+
+    // Prompt 28A — Legal Documents Collection
+    // Public read for published agreements; mutations strictly reserved for Admins
+    match /legal_documents/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Prompt 28A — Authoritative Legal Acceptances Collection
+    // Users can read their own acceptance records; admins can inspect all.
+    // Client write is allowed ONLY for creating own record with matching userId and immutable once written.
+    match /legal_acceptances/{acceptanceId} {
+      allow read: if isAuthenticated() && (isAdmin() || resource.data.userId == request.auth.uid);
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if false; // Immutable audit records
+    }
+
+    // Guest–Host Conversations & Messaging System — Strictly Private & Least Privilege
+    match /conversations/{conversationId} {
+      allow read: if isAuthenticated() && (
+        request.auth.uid in resource.data.participantIds
+      );
+      allow create: if isAuthenticated() && (
+        request.resource.data.participantIds is list &&
+        request.auth.uid in request.resource.data.participantIds
+      );
+      // Strictly restrict updates to authorized message delivery metadata and own read receipts.
+      // Participant IDs, hostId, and booking/listing associations cannot be changed by clients.
+      allow update: if isAuthenticated() && (
+        request.auth.uid in resource.data.participantIds &&
+        request.resource.data.participantIds == resource.data.participantIds &&
+        request.resource.data.hostId == resource.data.hostId &&
+        (!('guestId' in resource.data) || request.resource.data.guestId == resource.data.guestId) &&
+        (!('bookingId' in resource.data) || request.resource.data.bookingId == resource.data.bookingId) &&
+        (!('bookingRef' in resource.data) || request.resource.data.bookingRef == resource.data.bookingRef) &&
+        (!('listingId' in resource.data) || request.resource.data.listingId == resource.data.listingId) &&
+        (!('createdAt' in resource.data) || request.resource.data.createdAt == resource.data.createdAt) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'lastMessageText', 'lastMessageTimestamp', 'lastMessageSenderId', 'unreadCount', 'updatedAt'
+        ]) &&
+        (
+          // Case 1: Participant sending a new message (must update message text/timestamp with auth.uid as sender)
+          (
+            request.resource.data.diff(resource.data).affectedKeys().hasAny(['lastMessageText', 'lastMessageTimestamp']) &&
+            request.resource.data.lastMessageSenderId == request.auth.uid &&
+            request.resource.data.lastMessageText is string &&
+            request.resource.data.lastMessageTimestamp is string
+          ) ||
+          // Case 2: Participant updating own read receipts (can only zero their own unread count)
+          (
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['unreadCount', 'updatedAt']) &&
+            request.resource.data.unreadCount is map &&
+            request.resource.data.unreadCount[request.auth.uid] == 0 &&
+            (
+              !('unreadCount' in resource.data) ||
+              request.resource.data.unreadCount.diff(resource.data.unreadCount).affectedKeys().hasOnly([request.auth.uid])
+            )
+          )
+        )
+      );
+      allow delete: if false;
+
+      match /messages/{messageId} {
+        allow read: if isAuthenticated() && (
+          request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.participantIds
+        );
+        allow create: if isAuthenticated() && (
+          request.resource.data.senderId == request.auth.uid &&
+          request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.participantIds
+        );
+        // Messages are immutable historical records; only participant marking 'read' is permitted
+        allow update: if isAuthenticated() && (
+          request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.participantIds &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']) &&
+          request.resource.data.read is bool &&
+          request.resource.data.read == true
+        );
+        allow delete: if false;
+      }
+    }
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "name": "MozBook",
+  "description": "A modern booking platform for unique stays and experiences across Mozambique with host verification, AI document inspection, and community attractions.",
+  "requestFramePermissions": ["camera", "geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

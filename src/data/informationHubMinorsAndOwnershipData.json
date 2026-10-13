@@ -1,0 +1,37 @@
+[
+  {
+    "title": "Passport Requirements",
+    "factType": "Travel Document",
+    "priority": 1,
+    "tags": ["passport", "travel", "mozambique"],
+    "description": "Passport valid at least 60 days from entry with two blank pages (SADC citizens). SADC citizens may enter for 30 days without a visa for HOLIDAY purposes. Non-SADC passport holders need to obtain a visa and should obtain further info from their nearest Mozambican Embassy."
+  },
+  {
+    "title": "Children Under 18 Travelling",
+    "factType": "Travel Document",
+    "priority": 2,
+    "tags": ["children", "passport", "birth certificate"],
+    "description": "Passport that includes the details of both parents OR Birth Certificate with details of both parents. If passport and birth certificate do not have both parents' details, an Unabridged Birth Certificate (UBC) is required. If applied for UBC/Birth Certificate and not issued, then an Annexure A Letter MUST be issued on application by Department of Home Affairs. Parental Consent Affidavit Annexure C is required if one or both parents are not accompanying the child. Consent Affidavit in respect of School Tours: Annexure D if school tour. Child's Passport is required."
+  },
+  {
+    "title": "Vehicle Ownership – Owned by Driver",
+    "factType": "Vehicle",
+    "priority": 3,
+    "tags": ["vehicle", "ownership", "driver"],
+    "description": "Where the vehicle (or trailer, boat, caravan, etc.) is owned by the driver, the driver must present an original or certified copy of the vehicle registration document at border posts."
+  },
+  {
+    "title": "Vehicle Ownership – Financed by Bank",
+    "factType": "Vehicle",
+    "priority": 4,
+    "tags": ["vehicle", "bank", "authorization"],
+    "description": "Where the vehicle (or trailer, boat, caravan, etc.) is not owned by the driver and is still being financed by the bank, the driver will require an authorisation letter from the bank authorising the driver to take the vehicle out of the country. This letter must indicate the country and dates of travel. Certified copy of vehicle registration document must also be produced."
+  },
+  {
+    "title": "Vehicle Ownership – Owned by Company or Another Person",
+    "factType": "Vehicle",
+    "priority": 5,
+    "tags": ["vehicle", "company", "SAPS", "affidavit"],
+    "description": "Where the vehicle (or trailer, boat, caravan, etc.) is not owned by the driver but by a company or another person, the driver will require an affidavit from SAPS giving authorisation from the financial institution/owner to take the vehicle across the border, plus certified copy of the registered owner’s identity document and the vehicle registration document."
+  }
+]

@@ -1,0 +1,141 @@
+{
+  "defaults": {
+    "country_name": "DEFAULT",
+    "visa_status": "VISA_REQUIRED",
+    "eta_required": false,
+    "max_stay_days": 30,
+    "passport_validity_months": 6,
+    "entry_message": "A visa is required before traveling to Mozambique. Apply via the official eVisa portal or a Mozambican embassy."
+  },
+
+  "angola": {
+    "country_name": "Angola",
+    "visa_status": "NO_VISA",
+    "eta_required": false,
+    "max_stay_days": 30,
+    "passport_validity_months": 6,
+    "entry_message": "Visa not required for Angolan citizens. Passport must be valid for at least 6 months."
+  },
+  "botswana": {
+    "country_name": "Botswana",
+    "visa_status": "NO_VISA",
+    "eta_required": false,
+    "max_stay_days": 30,
+    "passport_validity_months": 6,
+    "entry_message": "Visa not required for Botswana citizens."
+  },
+  "south_africa": {
+    "country_name": "South Africa",
+    "visa_status": "NO_VISA",
+    "eta_required": false,
+    "max_stay_days": 30,
+    "passport_validity_months": 6,
+    "entry_message": "Visa not required for South African citizens."
+  },
+  "zimbabwe": {
+    "country_name": "Zimbabwe",
+    "visa_status": "NO_VISA",
+    "eta_required": false,
+    "max_stay_days": 30,
+    "passport_validity_months": 6,
+    "entry_message": "Visa not required for Zimbabwean citizens."
+  },
+  "tanzania": {
+    "country_name": "Tanzania",
+    "visa_status": "NO_VISA",
+    "eta_required": false,
+    "max_stay_days": 30,
+    "passport_validity_months": 6,
+    "entry_message": "Visa not required for Tanzanian citizens."
+  },
+
+  "united_kingdom": {
+    "country_name": "United Kingdom",
+    "visa_status": "VISA_EXEMPT_ETA",
+    "eta_required": true,
+    "max_stay_days": 30,
+    "passport_validity_months": 6,
+    "entry_message": "Visa exempt. ETA must be obtained online before travel to Mozambique."
+  },
+  "united_states": {
+    "country_name": "United States",
+    "visa_status": "VISA_EXEMPT_ETA",
+    "eta_required": true,
+    "max_stay_days": 30,
+    "passport_validity_months": 6,
+    "entry_message": "Visa exempt. ETA required prior to departure."
+  },
+  "portugal": {
+    "country_name": "Portugal",
+    "visa_status": "VISA_EXEMPT_ETA",
+    "eta_required": true,
+    "max_stay_days": 30,
+    "passport_validity_months": 6,
+    "entry_message": "No visa required, but ETA must be obtained online."
+  },
+  "france": {
+    "country_name": "France",
+    "visa_status": "VISA_EXEMPT_ETA",
+    "eta_required": true,
+    "max_stay_days": 30,
+    "passport_validity_months": 6,
+    "entry_message": "Visa exempt. ETA required before traveling."
+  },
+  "germany": {
+    "country_name": "Germany",
+    "visa_status": "VISA_EXEMPT_ETA",
+    "eta_required": true,
+    "max_stay_days": 30,
+    "passport_validity_months": 6,
+    "entry_message": "Visa exempt. Online ETA required."
+  },
+  "canada": {
+    "country_name": "Canada",
+    "visa_status": "VISA_EXEMPT_ETA",
+    "eta_required": true,
+    "max_stay_days": 30,
+    "passport_validity_months": 6,
+    "entry_message": "No visa required, but ETA must be obtained before travel."
+  },
+  "china": {
+    "country_name": "China",
+    "visa_status": "VISA_EXEMPT_ETA",
+    "eta_required": true,
+    "max_stay_days": 30,
+    "passport_validity_months": 6,
+    "entry_message": "Visa exempt. ETA required prior to arrival."
+  },
+  "japan": {
+    "country_name": "Japan",
+    "visa_status": "VISA_EXEMPT_ETA",
+    "eta_required": true,
+    "max_stay_days": 30,
+    "passport_validity_months": 6,
+    "entry_message": "Visa exempt with ETA required."
+  },
+  "united_arab_emirates": {
+    "country_name": "United Arab Emirates",
+    "visa_status": "VISA_EXEMPT_ETA",
+    "eta_required": true,
+    "max_stay_days": 30,
+    "passport_validity_months": 6,
+    "entry_message": "No visa required. ETA must be completed online."
+  },
+
+  "india": {
+    "country_name": "India",
+    "visa_status": "VISA_REQUIRED",
+    "eta_required": false,
+    "max_stay_days": 30,
+    "passport_validity_months": 6,
+    "entry_message": "Visa required before travel. Apply via Mozambique eVisa or embassy."
+  },
+  "brazil": {
+    "country_name": "Brazil",
+    "visa_status": "VISA_REQUIRED",
+    "eta_required": false,
+    "max_stay_days": 30,
+    "passport_validity_months": 6,
+    "entry_message": "Visa required prior to travel."
+  }
+}
