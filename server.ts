@@ -80,7 +80,9 @@ async function getImagePart(imageStr?: string): Promise<{ inlineData: { mimeType
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const rawPort = process.env.PORT;
+  const parsedPort = rawPort ? parseInt(rawPort, 10) : 3000;
+  const PORT = (!isNaN(parsedPort) && parsedPort > 0 && parsedPort <= 65535) ? parsedPort : 3000;
   const httpServer = http.createServer(app);
 
   // JSON payload parser with rawBody capture for cryptographic webhook signature verification
@@ -1104,6 +1106,24 @@ async function startServer() {
       }
 
       const { bookingId } = req.params;
+      const bookingData = await getAuthoritativeBooking(bookingId);
+      if (!bookingData) {
+        res.status(404).json({ success: false, error: "Reservation not found." });
+        return;
+      }
+
+      const b = bookingData.data;
+      const isAuthorized =
+        b.userId === user.uid ||
+        (user.email && b.customerEmail && user.email.toLowerCase() === b.customerEmail.toLowerCase()) ||
+        b.hostId === user.uid ||
+        isUserAdmin(user);
+
+      if (!isAuthorized) {
+        res.status(403).json({ success: false, error: "Access denied: You are not authorized to view refunds for this booking." });
+        return;
+      }
+
       const refunds = await getRefundsForBooking(bookingId);
 
       res.status(200).json({ success: true, refunds });
@@ -1126,6 +1146,22 @@ async function startServer() {
       }
 
       const { refundId } = req.params;
+      const refund = await getRefundById(refundId);
+      if (!refund) {
+        res.status(404).json({ success: false, error: "Refund record not found." });
+        return;
+      }
+
+      const isAuthorized =
+        refund.requestedByUserId === user.uid ||
+        refund.hostId === user.uid ||
+        isUserAdmin(user);
+
+      if (!isAuthorized) {
+        res.status(403).json({ success: false, error: "Access denied: You are not authorized to sync this refund." });
+        return;
+      }
+
       const updatedRefund = await syncPaySuiteRefundStatus(refundId);
 
       res.status(200).json({ success: true, refund: updatedRefund });
@@ -2183,7 +2219,9 @@ Output strictly a JSON object matching this schema:
    */
   app.post("/api/legal/accept", async (req, res) => {
     try {
-      const { userId, documentType, documentVersionId, context, bookingId, hostId } = req.body;
+      const user = await authenticateRequest(req);
+      const { userId: bodyUserId, documentType, documentVersionId, context, bookingId, hostId } = req.body;
+      const userId = user?.uid || bodyUserId;
 
       if (!userId || !documentType || !context) {
         res.status(400).json({
@@ -2253,9 +2291,14 @@ Output strictly a JSON object matching this schema:
 
   /**
    * GET /api/legal/acceptances
-   * Retrieve authoritative acceptance audit history (Admin or internal verification).
+   * Retrieve authoritative acceptance audit history (Admin only).
    */
-  app.get("/api/legal/acceptances", (req, res) => {
+  app.get("/api/legal/acceptances", async (req, res) => {
+    const user = await authenticateRequest(req);
+    if (!user || !isUserAdmin(user)) {
+      res.status(403).json({ success: false, error: "Forbidden: Administrator privileges required." });
+      return;
+    }
     res.status(200).json({
       success: true,
       count: legalAcceptanceLedger.length,
@@ -2278,6 +2321,13 @@ Output strictly a JSON object matching this schema:
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), 'dist');
+    // Guard against serving any server-side bundle or sourcemap
+    app.use((req, res, next) => {
+      if (req.path.includes('server.cjs') || req.path.endsWith('.map')) {
+        return res.status(404).end();
+      }
+      next();
+    });
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));

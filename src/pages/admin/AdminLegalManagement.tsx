@@ -15,6 +15,7 @@ import AdminLayout from '../../components/admin/AdminLayout';
 import { LegalDocumentType, LegalDocumentVersion, LegalConfigWarning } from '../../types/legal';
 import { INITIAL_LEGAL_DOCUMENTS, LEGAL_CONFIG_WARNINGS } from '../../data/legalDocuments';
 import { LegalService } from '../../services/legalService';
+import { auth } from '../../firebase';
 
 export const AdminLegalManagement: React.FC = () => {
   const [documents, setDocuments] = useState<Record<LegalDocumentType, LegalDocumentVersion>>(INITIAL_LEGAL_DOCUMENTS);
@@ -34,16 +35,25 @@ export const AdminLegalManagement: React.FC = () => {
     });
 
     // Fetch sample or live acceptance audit logs from server
-    fetch('/api/legal/acceptances')
-      .then(res => res.json())
-      .then(data => {
-        if (isMounted && data.success && Array.isArray(data.acceptances)) {
-          setRecentAcceptances(data.acceptances);
+    const fetchAcceptances = async () => {
+      try {
+        const headers: Record<string, string> = {};
+        if (auth.currentUser) {
+          const idToken = await auth.currentUser.getIdToken().catch(() => '');
+          if (idToken) headers['Authorization'] = `Bearer ${idToken}`;
         }
-      })
-      .catch(() => {
+        const res = await fetch('/api/legal/acceptances', { headers });
+        if (res.ok) {
+          const data = await res.json();
+          if (isMounted && data.success && Array.isArray(data.acceptances)) {
+            setRecentAcceptances(data.acceptances);
+          }
+        }
+      } catch {
         // Safe fallback if server endpoint empty
-      });
+      }
+    };
+    fetchAcceptances();
 
     return () => { isMounted = false; };
   }, []);

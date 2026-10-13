@@ -347,8 +347,9 @@ export async function createPaymentIntent(
  */
 export async function getAuthoritativePayment(paymentId: string): Promise<PaymentLedgerEntry | null> {
   try {
-    const snap = await getDoc(doc(db, 'payments', paymentId));
-    if (snap.exists()) {
+    const adminDb = getPrivilegedFirestore();
+    const snap = await adminDb.collection('payments').doc(paymentId).get();
+    if (snap.exists) {
       return snap.data() as PaymentLedgerEntry;
     }
   } catch (err) {
@@ -372,14 +373,15 @@ export function isUserAdmin(user: { uid: string; email?: string } | null | undef
  */
 export async function getAuthoritativeBooking(bookingId: string): Promise<{ data: any; category: 'stay' | 'activity' | 'trip' } | null> {
   try {
-    const staySnap = await getDoc(doc(db, 'bookings', bookingId));
-    if (staySnap.exists()) {
+    const adminDb = getPrivilegedFirestore();
+    const staySnap = await adminDb.collection('bookings').doc(bookingId).get();
+    if (staySnap.exists) {
       return { data: { id: staySnap.id, ...staySnap.data() }, category: 'stay' };
     }
 
-    const actSnap = await getDoc(doc(db, 'activity_bookings', bookingId));
-    if (actSnap.exists()) {
-      const actData = actSnap.data();
+    const actSnap = await adminDb.collection('activity_bookings').doc(bookingId).get();
+    if (actSnap.exists) {
+      const actData = actSnap.data() || {};
       return {
         data: { id: actSnap.id, ...actData },
         category: actData.activityType === 'trip' ? 'trip' : 'activity'
