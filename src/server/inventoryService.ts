@@ -221,6 +221,8 @@ export interface ReserveExperienceParams {
   pricingType?: string;
   travelGroupId?: string;
   idempotencyKey?: string;
+  pickupRequested?: boolean;
+  pickupNotes?: string;
 }
 
 export interface ReserveStayParams {
@@ -387,6 +389,35 @@ export async function reserveExperienceInventory(params: ReserveExperienceParams
         );
       }
 
+      // Authoritative pricing calculation strictly from trusted database activity record
+      const effectiveAdultPrice = (act.specialOffer?.enabled && act.specialOffer.specialPrice && Number(act.specialOffer.specialPrice) > 0)
+        ? Number(act.specialOffer.specialPrice)
+        : Number(act.priceAdult || 0);
+
+      const effectiveChildPrice = act.priceChild !== undefined
+        ? Number(act.priceChild)
+        : Math.round(effectiveAdultPrice * 0.6);
+
+      const adultsCount = Math.max(0, Number(params.adults !== undefined ? params.adults : requestedSeats));
+      const childrenCount = Math.max(0, Number(params.children !== undefined ? params.children : 0));
+
+      let baseTotal = 0;
+      const actPricingType = act.pricingType || params.pricingType || 'per_person';
+
+      if (actPricingType === 'per_person') {
+        baseTotal = (effectiveAdultPrice * adultsCount) + (effectiveChildPrice * childrenCount);
+      } else if (actPricingType === 'per_group') {
+        baseTotal = Number(act.priceGroup || effectiveAdultPrice);
+      } else {
+        baseTotal = Number(act.pricePerBooking || effectiveAdultPrice);
+      }
+
+      const pickupCost = (params.pickupRequested && act.pickup?.offered && act.pickup?.fee)
+        ? Number(act.pickup.fee)
+        : 0;
+
+      const authoritativeTotalMzn = Math.max(1, Math.round(baseTotal + pickupCost));
+
       const newBooking = {
         id: bookingId,
         bookingRef,
@@ -397,15 +428,17 @@ export async function reserveExperienceInventory(params: ReserveExperienceParams
         date: params.date,
         time: params.time || '',
         totalGuests: requestedSeats,
-        adults: params.adults || requestedSeats,
-        children: params.children || 0,
+        adults: adultsCount,
+        children: childrenCount,
         userId: params.customerUserId,
         customerName: params.customerName,
         customerEmail: params.customerEmail,
         customerPhone: params.customerPhone,
-        totalMzn: Number(params.totalMzn),
+        totalMzn: authoritativeTotalMzn,
         currency: 'MZN',
-        pricingType: params.pricingType || act.pricingType || 'per_person',
+        pricingType: actPricingType,
+        pickupRequested: Boolean(params.pickupRequested),
+        pickupNotes: params.pickupNotes || '',
         travelGroupId: params.travelGroupId || null,
         status: 'pending',
         paymentStatus: 'unpaid',
@@ -461,16 +494,10 @@ export async function reserveExperienceInventory(params: ReserveExperienceParams
     return transactionResult.booking;
   } catch (err: any) {
     if (isPermissionDenied(err)) {
-      console.warn(`[Inventory] Firebase Admin lacks IAM permissions (PERMISSION_DENIED). Seamlessly executing authoritative server-side OCC atomic reservation engine.`);
-      return reserveExperienceInventoryInMemory(
-        params,
-        slotDocId,
-        requestedSeats,
-        bookingId,
-        bookingRef,
-        now,
-        nowIso,
-        holdExpiresAtIso
+      console.error(`[Inventory Error] Firestore Admin PERMISSION_DENIED: persistent reservation failed for experience '${params.activityId}'.`);
+      throw new InventoryError(
+        500,
+        `Persistent reservation failed: Firestore database access denied (PERMISSION_DENIED). Booking could not be saved.`
       );
     }
     throw err;
@@ -770,6 +797,14 @@ export async function reserveStayInventory(params: ReserveStayParams) {
         return { reusableBookingId: reusableExistingBookingId };
       }
 
+      // Authoritative pricing calculation strictly from trusted database listing record
+      const stayNights = nightsList.length;
+      const hasDeal = Boolean(listing.specialOffer?.enabled && listing.specialOffer.specialPrice && Number(listing.specialOffer.specialPrice) > 0);
+      const effectiveNightlyRate = hasDeal ? Number(listing.specialOffer.specialPrice) : Number(listing.price || 0);
+      const cleaningFee = Number(listing.cleaningFee !== undefined ? listing.cleaningFee : 1200);
+      const serviceFee = Number(listing.serviceFee !== undefined ? listing.serviceFee : 850);
+      const authoritativeTotalAmount = Math.max(1, Math.round((effectiveNightlyRate * stayNights) + cleaningFee + serviceFee));
+
       const newBooking = {
         id: bookingId,
         bookingRef,
@@ -780,7 +815,8 @@ export async function reserveStayInventory(params: ReserveStayParams) {
         endDate: params.endDate,
         checkInDate: params.startDate,
         checkOutDate: params.endDate,
-        nights: params.nights,
+        nights: stayNights,
+        nightlyRate: effectiveNightlyRate,
         adults: params.adults,
         children: params.children,
         totalGuests: params.totalGuests,
@@ -788,7 +824,9 @@ export async function reserveStayInventory(params: ReserveStayParams) {
         customerName: params.customerName,
         customerEmail: params.customerEmail,
         customerPhone: params.customerPhone,
-        totalAmount: Number(params.totalAmount),
+        cleaningFee,
+        serviceFee,
+        totalAmount: authoritativeTotalAmount,
         currency: 'MZN',
         accommodationId: params.accommodationId || null,
         travelGroupId: params.travelGroupId || null,
@@ -846,15 +884,10 @@ export async function reserveStayInventory(params: ReserveStayParams) {
     return transactionResult.booking;
   } catch (err: any) {
     if (isPermissionDenied(err)) {
-      console.warn(`[Inventory] Firebase Admin lacks IAM permissions (PERMISSION_DENIED). Seamlessly executing authoritative server-side OCC atomic reservation engine for stay.`);
-      return reserveStayInventoryInMemory(
-        params,
-        nightsList,
-        bookingId,
-        bookingRef,
-        now,
-        nowIso,
-        holdExpiresAtIso
+      console.error(`[Inventory Error] Firestore Admin PERMISSION_DENIED: persistent reservation failed for stay '${params.listingId}'.`);
+      throw new InventoryError(
+        500,
+        `Persistent reservation failed: Firestore database access denied (PERMISSION_DENIED). Stay booking could not be saved.`
       );
     }
     throw err;

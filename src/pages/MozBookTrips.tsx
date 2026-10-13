@@ -43,7 +43,7 @@ import { travelGroupService } from '../services/travelGroupService';
 
 export default function MozBookTrips() {
   const [searchParams] = useSearchParams();
-  const { user } = useAuth();
+  const { user, login } = useAuth();
   const linkedGroupId = searchParams.get('groupId') || searchParams.get('travelGroupId') || null;
   const [activities, setActivities] = useState<ActivityTrip[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -197,6 +197,23 @@ export default function MozBookTrips() {
     e.preventDefault();
     if (!bookingActivity || !contactName.trim() || !contactPhone.trim()) return;
 
+    let currentUser = user;
+    if (!currentUser) {
+      try {
+        await login();
+        const { auth } = await import('../firebase');
+        currentUser = auth.currentUser as any;
+      } catch (authErr) {
+        console.warn('Authentication cancelled or failed:', authErr);
+        return;
+      }
+    }
+
+    if (!currentUser) {
+      alert('Please sign in to confirm your booking.');
+      return;
+    }
+
     const totalGuests = adults + children;
     
     // Safety capacity check
@@ -232,6 +249,7 @@ export default function MozBookTrips() {
         activityType: bookingActivity.type,
         city: bookingActivity.city,
         hostId: bookingActivity.hostId,
+        userId: currentUser.uid,
         customerName: contactName.trim(),
         customerEmail: contactEmail.trim() || 'guest@mozbook.mz',
         customerPhone: contactPhone.trim(),

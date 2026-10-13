@@ -97,47 +97,62 @@ async function startServer() {
     res.json({ status: "ok", message: "Mozbook API is healthy", hasGeminiKey: !!process.env.GEMINI_API_KEY });
   });
 
-  // Helper: Verify authenticated user from request authorization header or internal dev token
+  // Helper: Verify authenticated user strictly from verified Firebase ID token
   async function authenticateRequest(req: express.Request): Promise<{ uid: string; email?: string; displayName?: string; idToken?: string } | null> {
     const authHeader = req.headers.authorization;
-    const xUserId = req.headers['x-user-id'] as string;
-    const xUserEmail = req.headers['x-user-email'] as string;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return null;
+    }
 
-    if (authHeader && authHeader.startsWith('Bearer ')) {
-      const token = authHeader.split('Bearer ')[1].trim();
-      if (token) {
-        try {
-          const apiKey = firebaseConfig.apiKey;
-          const resp = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${apiKey}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ idToken: token })
-          });
-          if (resp.ok) {
-            const data = await resp.json();
-            if (data.users && data.users.length > 0) {
-              return {
-                uid: data.users[0].localId,
-                email: data.users[0].email,
-                displayName: data.users[0].displayName,
-                idToken: token
-              };
-            }
-          }
-        } catch (err) {
-          console.warn('[Auth] ID token verification request failed:', err);
+    const token = authHeader.split('Bearer ')[1].trim();
+    if (!token) {
+      return null;
+    }
+
+    // 1. Verify token via Firebase Identity Toolkit
+    try {
+      const apiKey = firebaseConfig.apiKey;
+      const resp = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${apiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ idToken: token })
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        if (data.users && data.users.length > 0) {
+          return {
+            uid: data.users[0].localId,
+            email: data.users[0].email,
+            displayName: data.users[0].displayName,
+            idToken: token
+          };
         }
       }
+    } catch (err) {
+      console.warn('[Auth] ID token verification request failed:', err);
     }
 
-    // Fallback: If x-user-id header is provided for authenticated API interactions
-    if (xUserId && typeof xUserId === 'string' && xUserId.trim().length > 3) {
-      return {
-        uid: xUserId.trim(),
-        email: xUserEmail ? xUserEmail.trim() : undefined
-      };
+    // 2. Fallback to Firebase Admin Auth verifyIdToken if app initialized
+    try {
+      const { getAuth } = await import('firebase-admin/auth');
+      const { getApps } = await import('firebase-admin/app');
+      if (getApps().length > 0) {
+        const decoded = await getAuth().verifyIdToken(token);
+        if (decoded && decoded.uid) {
+          return {
+            uid: decoded.uid,
+            email: decoded.email,
+            displayName: (decoded as any).name,
+            idToken: token
+          };
+        }
+      }
+    } catch (adminAuthErr) {
+      // Token is invalid or expired
     }
 
+    // STRICT SECURITY: Never fall back to unverified x-user-id header!
+    // Caller identity is derived exclusively from cryptographically verified tokens.
     return null;
   }
 

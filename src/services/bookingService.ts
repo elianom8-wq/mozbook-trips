@@ -63,9 +63,7 @@ export async function createStayBooking(
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      ...(idToken ? { 'Authorization': `Bearer ${idToken}` } : {}),
-      'x-user-id': bookingData.userId || 'guest_' + Date.now(),
-      'x-user-email': bookingData.customerEmail || ''
+      ...(idToken ? { 'Authorization': `Bearer ${idToken}` } : {})
     },
     body: JSON.stringify({
       category: 'stay',

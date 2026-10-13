@@ -626,9 +626,7 @@ export async function createActivityBooking(
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      ...(idToken ? { 'Authorization': `Bearer ${idToken}` } : {}),
-      'x-user-id': bookingData.userId || 'guest_' + Date.now(),
-      'x-user-email': bookingData.customerEmail || ''
+      ...(idToken ? { 'Authorization': `Bearer ${idToken}` } : {})
     },
     body: JSON.stringify({
       category: 'experience',
@@ -641,12 +639,14 @@ export async function createActivityBooking(
       totalGuests: bookingData.totalGuests,
       adults: bookingData.adults,
       children: bookingData.children,
-      customerUserId: bookingData.userId || 'guest_' + Date.now(),
+      customerUserId: bookingData.userId,
       customerName: bookingData.customerName,
       customerEmail: bookingData.customerEmail,
       customerPhone: bookingData.customerPhone,
       totalMzn: bookingData.totalMzn,
       pricingType: bookingData.pricingType,
+      pickupRequested: (bookingData as any).pickupRequested,
+      pickupNotes: (bookingData as any).pickupNotes,
       travelGroupId: bookingData.travelGroupId
     })
   });
