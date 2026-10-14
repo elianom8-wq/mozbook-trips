@@ -181,6 +181,7 @@ export default function Eateries() {
   const [userStars, setUserStars] = useState(5);
   const [userComment, setUserComment] = useState('');
   const [userName, setUserName] = useState(user?.displayName || profile?.displayName || '');
+  const [reviewError, setReviewError] = useState<string | null>(null);
 
   // Check-In Modal state
   const [checkInModalPlace, setCheckInModalPlace] = useState<GooglePlace | null>(null);
@@ -190,6 +191,7 @@ export default function Eateries() {
   const [checkInTripId, setCheckInTripId] = useState<string>('');
   const [submittingCheckIn, setSubmittingCheckIn] = useState(false);
   const [checkInSuccessAlert, setCheckInSuccessAlert] = useState<string | null>(null);
+  const [checkInError, setCheckInError] = useState<string | null>(null);
 
   // Fetch Check-ins and Reviews from MozBook backend
   const fetchSocialData = useCallback(async () => {
@@ -328,15 +330,22 @@ export default function Eateries() {
   // Submit MozBook Review
   const handleSubmitReview = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!ratingModalPlace || !userComment.trim() || !userName.trim()) return;
+    if (!ratingModalPlace || !userComment.trim()) return;
+
+    if (!user) {
+      setReviewError('Please sign in to publish a verified MozBook review.');
+      return;
+    }
 
     try {
+      const idToken = await user.getIdToken();
       const res = await fetch('/api/reviews', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${idToken}`
+        },
         body: JSON.stringify({
-          user_id: user?.uid || 'user_guest_' + Date.now(),
-          user_name: userName.trim(),
           google_place_id: ratingModalPlace.google_place_id,
           rating: userStars,
           review_text: userComment.trim()
@@ -348,29 +357,41 @@ export default function Eateries() {
         if (data.review) {
           setReviews(prev => [data.review, ...prev]);
         }
+        setUserComment('');
+        setUserStars(5);
+        setRatingModalPlace(null);
+        setReviewError(null);
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setReviewError(data.error || 'Failed to submit review.');
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to submit MozBook review:', err);
-    } finally {
-      setUserComment('');
-      setUserStars(5);
-      setRatingModalPlace(null);
+      setReviewError(err.message || 'Failed to submit review.');
     }
   };
 
   // Submit MozBook Check-In
   const handleSubmitCheckIn = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!checkInModalPlace || !checkInName.trim()) return;
+    if (!checkInModalPlace) return;
+
+    if (!user) {
+      setCheckInError('Please sign in to share a live MozBook check-in.');
+      return;
+    }
 
     setSubmittingCheckIn(true);
+    setCheckInError(null);
     try {
+      const idToken = await user.getIdToken();
       const res = await fetch('/api/check-ins', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${idToken}`
+        },
         body: JSON.stringify({
-          user_id: user?.uid || 'user_traveler_' + Date.now(),
-          user_name: checkInName.trim(),
           google_place_id: checkInModalPlace.google_place_id,
           place_name: checkInModalPlace.name,
           latitude: checkInModalPlace.location.latitude,
@@ -388,15 +409,20 @@ export default function Eateries() {
           setCheckInSuccessAlert(`Checked into ${checkInModalPlace.name}! Fellow MozBook travelers nearby can see your table.`);
           setTimeout(() => setCheckInSuccessAlert(null), 5000);
         }
+        setCheckInNote('');
+        setCheckInSpot('');
+        setCheckInTripId('');
+        setCheckInModalPlace(null);
+        setCheckInError(null);
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setCheckInError(data.error || 'Failed to submit check-in.');
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to submit MozBook check-in:', err);
+      setCheckInError(err.message || 'Failed to submit check-in.');
     } finally {
       setSubmittingCheckIn(false);
-      setCheckInNote('');
-      setCheckInSpot('');
-      setCheckInTripId('');
-      setCheckInModalPlace(null);
     }
   };
 
@@ -868,6 +894,11 @@ export default function Eateries() {
             </div>
 
             <form onSubmit={handleSubmitReview} className="space-y-4">
+              {reviewError && (
+                <div className="p-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-xl">
+                  {reviewError}
+                </div>
+              )}
               {/* Star selector */}
               <div>
                 <label className="block text-xs font-semibold text-gray-700 mb-1.5">
@@ -974,6 +1005,11 @@ export default function Eateries() {
             </p>
 
             <form onSubmit={handleSubmitCheckIn} className="space-y-4">
+              {checkInError && (
+                <div className="p-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-xl">
+                  {checkInError}
+                </div>
+              )}
               {/* Your Name */}
               <div>
                 <label className="block text-xs font-semibold text-gray-700 mb-1">

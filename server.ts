@@ -28,6 +28,13 @@ import {
 } from "./src/server/inventoryService";
 import { parseAndValidateTd3Mrz } from "./src/utils/mrzParser";
 import { calculateCommission } from "./src/config/platformCommission";
+import {
+  createOcrPayloadSizeGuard,
+  createOcrRateLimitMiddleware,
+  sanitizeReviewSubmission,
+  sanitizeCheckInSubmission,
+  sanitizeLegalAcceptanceSubmission
+} from "./src/server/routeSecurity";
 
 dotenv.config();
 
@@ -84,6 +91,12 @@ async function startServer() {
   const parsedPort = rawPort ? parseInt(rawPort, 10) : 3000;
   const PORT = (!isNaN(parsedPort) && parsedPort > 0 && parsedPort <= 65535) ? parsedPort : 3000;
   const httpServer = http.createServer(app);
+
+  // Phase 2B: Dedicated pre-parsing OCR payload size guard (10MB) and in-memory rate limiter.
+  // The size guard inspects Content-Length before oversized request bodies are fully parsed or buffered.
+  // Note: The in-memory sliding rate limiter is bounded per server process and does not share state across Cloud Run instances.
+  app.use('/api/verify/extract-document', createOcrPayloadSizeGuard());
+  app.use('/api/verify/extract-document', createOcrRateLimitMiddleware());
 
   // JSON payload parser with rawBody capture for cryptographic webhook signature verification
   app.use(express.json({ 
@@ -1180,7 +1193,7 @@ async function startServer() {
     try {
       const { docType, frontImage, backImage } = req.body;
 
-      console.log(`[Verify] Extracting document data for docType: ${docType}, front: ${!!frontImage}, back: ${!!backImage}`);
+      console.log(`[Verify] OCR extraction request received: docType=${docType || 'national_id'}, hasFront=${Boolean(frontImage)}, hasBack=${Boolean(backImage)}`);
 
       if (!frontImage) {
         res.status(400).json({
@@ -1192,7 +1205,7 @@ async function startServer() {
       }
 
       // Requirement 7: Do not attempt repeated Gemini API calls while provider reports depleted credits
-      if (isGeminiCreditsDepleted && !req.query.force) {
+      if (isGeminiCreditsDepleted) {
         console.warn("[Verify] Skipping Gemini call: prepayment credits are known to be depleted.");
         res.status(200).json({
           success: false,
@@ -1270,8 +1283,8 @@ Output strictly a JSON object matching this schema:
           });
 
           const rawText = response.text || "{}";
-          console.log("[Verify] Gemini extracted raw text:", rawText);
           extractedResult = JSON.parse(rawText);
+          console.log(`[Verify] OCR document data extracted successfully (fields: ${Object.keys(extractedResult || {}).length})`);
         } catch (geminiError: any) {
           const errMsg = geminiError?.message || String(geminiError);
           const isQuotaOrCredits = errMsg.includes("prepayment credits are depleted") || 
@@ -2104,39 +2117,19 @@ Output strictly a JSON object matching this schema:
     });
   });
 
-  app.post("/api/check-ins", (req, res) => {
-    const {
-      user_id = "user_guest",
-      user_name = "MozBook Traveler",
-      google_place_id,
-      place_name,
-      latitude,
-      longitude,
-      trip_id = null,
-      spot = "Main Area",
-      note = ""
-    } = req.body;
+  // In-memory social check-ins: valid for active server session only (transient; does not persist across container restarts)
+  app.post("/api/check-ins", async (req, res) => {
+    const user = await authenticateRequest(req);
+    const validation = sanitizeCheckInSubmission(user, req.body);
 
-    if (!google_place_id || !place_name) {
-      return res.status(400).json({ success: false, error: "google_place_id and place_name required" });
+    if (!validation.valid || !validation.checkIn) {
+      return res.status(validation.statusCode || 400).json({
+        success: false,
+        error: validation.error || "Failed to validate check-in."
+      });
     }
 
-    const newCheckIn: MozBookCheckIn = {
-      id: `chk_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-      user_id,
-      user_name,
-      google_place_id,
-      place_name,
-      latitude: Number(latitude) || 0,
-      longitude: Number(longitude) || 0,
-      trip_id: trip_id || undefined,
-      checked_in_at: new Date().toISOString(),
-      spot: spot.trim() || "Main Dining Area",
-      note: note.trim(),
-      expires_at: Date.now() + 3 * 3600000 // 3 hours validity
-    };
-
-    // Prepend to list
+    const newCheckIn = validation.checkIn;
     mozbookCheckIns.unshift(newCheckIn);
 
     res.json({
@@ -2161,29 +2154,18 @@ Output strictly a JSON object matching this schema:
     });
   });
 
-  app.post("/api/reviews", (req, res) => {
-    const {
-      user_id = "user_guest",
-      user_name = "MozBook Traveler",
-      google_place_id,
-      rating = 5,
-      review_text = ""
-    } = req.body;
+  app.post("/api/reviews", async (req, res) => {
+    const user = await authenticateRequest(req);
+    const validation = sanitizeReviewSubmission(user, req.body);
 
-    if (!google_place_id || !review_text) {
-      return res.status(400).json({ success: false, error: "google_place_id and review_text required" });
+    if (!validation.valid || !validation.review) {
+      return res.status(validation.statusCode || 400).json({
+        success: false,
+        error: validation.error || "Failed to validate review."
+      });
     }
 
-    const newReview: MozBookReview = {
-      id: `rev_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-      user_id,
-      user_name,
-      google_place_id,
-      rating: Math.min(5, Math.max(1, Number(rating) || 5)),
-      review_text: review_text.trim(),
-      created_at: new Date().toISOString()
-    };
-
+    const newReview = validation.review;
     mozbookReviews.unshift(newReview);
 
     res.json({
@@ -2216,29 +2198,28 @@ Output strictly a JSON object matching this schema:
    * POST /api/legal/accept
    * Records an immutable, server-authoritative timestamp of customer or partner legal acceptance.
    * Prevents client timestamp forgery and duplicate submissions.
+   *
+   * ARCHITECTURAL NOTICE:
+   * This in-memory ledger records acceptance events for the active server session to prevent client
+   * timestamp forgery and enforce idempotency. It is strictly bounded per server process and does
+   * not serve as permanent durable legal evidence across server restarts.
    */
   app.post("/api/legal/accept", async (req, res) => {
     try {
       const user = await authenticateRequest(req);
-      const { userId: bodyUserId, documentType, documentVersionId, context, bookingId, hostId } = req.body;
-      const userId = user?.uid || bodyUserId;
+      const userAgentHeader = (req.headers['user-agent'] as string) || 'unknown';
+      const validation = sanitizeLegalAcceptanceSubmission(user, req.body, userAgentHeader);
 
-      if (!userId || !documentType || !context) {
-        res.status(400).json({
+      if (!validation.valid || !validation.acceptance) {
+        res.status(validation.statusCode || 400).json({
           success: false,
-          error: "Missing required fields: userId, documentType, and context are mandatory."
+          error: validation.error || "Failed to record legal acceptance."
         });
         return;
       }
 
-      const validDocTypes = ['terms_customer', 'privacy_policy', 'cancellation_refund_policy', 'partner_agreement'];
-      if (!validDocTypes.includes(documentType)) {
-        res.status(400).json({
-          success: false,
-          error: `Invalid documentType '${documentType}'. Must be one of: ${validDocTypes.join(', ')}`
-        });
-        return;
-      }
+      const { documentType, documentVersionId, context, bookingId } = req.body;
+      const userId = validation.acceptance.userId;
 
       // Check for exact duplicate within short window to ensure idempotency
       const existing = legalAcceptanceLedger.find(
@@ -2259,20 +2240,7 @@ Output strictly a JSON object matching this schema:
         return;
       }
 
-      const acceptanceRecord = {
-        id: `leg_acc_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
-        userId,
-        documentType,
-        documentVersionId: documentVersionId || 'v1',
-        documentVersion: '1.0.0',
-        documentContentHash: `sha256_${documentType}_1.0.0`,
-        acceptedAt: new Date().toISOString(),
-        context,
-        bookingId: bookingId || undefined,
-        hostId: hostId || undefined,
-        userAgent: req.headers['user-agent'] || 'unknown'
-      };
-
+      const acceptanceRecord = validation.acceptance;
       legalAcceptanceLedger.unshift(acceptanceRecord);
 
       res.status(201).json({

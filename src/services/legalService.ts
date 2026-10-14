@@ -1,4 +1,4 @@
-import { db } from '../firebase';
+import { db, auth } from '../firebase';
 import { 
   collection, 
   doc, 
@@ -121,17 +121,24 @@ export class LegalService {
    * Prevents client-side timestamp tampering and logs immutable records.
    */
   static async recordAcceptanceViaApi(params: {
-    userId: string;
+    userId?: string;
     documentType: LegalDocumentType;
     documentVersionId: string;
     context: 'checkout' | 'partner_onboarding' | 'signup' | 'reacceptance';
     bookingId?: string;
     hostId?: string;
+    idToken?: string;
   }): Promise<{ success: boolean; acceptanceId?: string; error?: string }> {
     try {
+      const idToken = params.idToken || (await auth.currentUser?.getIdToken());
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (idToken) {
+        headers['Authorization'] = `Bearer ${idToken}`;
+      }
+
       const response = await fetch('/api/legal/accept', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify(params)
       });
       const data = await response.json();
