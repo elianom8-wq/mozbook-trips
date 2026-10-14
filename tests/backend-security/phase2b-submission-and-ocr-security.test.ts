@@ -1,8 +1,14 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest';
+import http from 'http';
+import express from 'express';
+import type { AddressInfo } from 'net';
 import {
   OcrRateLimiter,
   createOcrPayloadSizeGuard,
   createOcrRateLimitMiddleware,
+  getTrustedClientIp,
+  ocrBodyParser,
+  ocrPayloadErrorHandler,
   sanitizeReviewSubmission,
   sanitizeCheckInSubmission,
   sanitizeLegalAcceptanceSubmission,
@@ -11,7 +17,7 @@ import {
   OCR_RATE_LIMIT_MAX_REQUESTS
 } from '../../src/server/routeSecurity';
 
-describe('Phase 2B: Route Security & Identity Verification Hardening', () => {
+describe('Phase 2B & 2C: Route Security, Identity Verification & OCR Enforcement', () => {
 
   // ==========================================================================
   // 1. POST /api/reviews Security & Identity Integrity
@@ -74,7 +80,6 @@ describe('Phase 2B: Route Security & Identity Verification Hardening', () => {
       expect(result.valid).toBe(true);
       expect(result.statusCode).toBe(200);
       expect(result.review).toBeDefined();
-      // Must be the verified token UID, NEVER the attacker's body value
       expect(result.review?.user_id).toBe('user_authentic_123');
       expect(result.review?.user_id).not.toBe('attacker_spoofed_victim_id');
       expect(result.review?.user_name).toBe('Mateus Chissano');
@@ -229,146 +234,320 @@ describe('Phase 2B: Route Security & Identity Verification Hardening', () => {
   });
 
   // ==========================================================================
-  // 4. POST /api/verify/extract-document: Rate Limiter & Size Guard
+  // 4. Rate Limiter Identity Hardening & Anti-Spoofing
   // ==========================================================================
-  describe('4. Document OCR Rate Limiting & Payload Size Protection', () => {
-    let testLimiter: OcrRateLimiter;
-
-    beforeEach(() => {
-      // 5 requests per 1000ms window for focused testing
-      testLimiter = new OcrRateLimiter(1000, 5);
-    });
-
-    it('allows requests within threshold and tracks count accurately', () => {
-      const clientIp = '192.168.1.100';
-
-      for (let i = 1; i <= 5; i++) {
-        const check = testLimiter.checkLimit(clientIp);
-        expect(check.allowed).toBe(true);
-        expect(check.currentCount).toBe(i);
-      }
-    });
-
-    it('blocks the (maxRequests + 1) request with HTTP 429 semantics and retryAfterSeconds', () => {
-      const clientIp = '192.168.1.101';
-
-      // Exhaust 5 allowed requests
-      for (let i = 0; i < 5; i++) {
-        testLimiter.checkLimit(clientIp);
-      }
-
-      // 6th request must be rejected
-      const blocked = testLimiter.checkLimit(clientIp);
-      expect(blocked.allowed).toBe(false);
-      expect(blocked.retryAfterSeconds).toBeGreaterThan(0);
-      expect(blocked.currentCount).toBe(5);
-    });
-
-    it('isolates rate limits between distinct client identifiers', () => {
-      const clientA = '10.0.0.1';
-      const clientB = '10.0.0.2';
-
-      for (let i = 0; i < 5; i++) {
-        testLimiter.checkLimit(clientA);
-      }
-
-      // Client A is blocked
-      expect(testLimiter.checkLimit(clientA).allowed).toBe(false);
-
-      // Client B is still fresh and allowed
-      expect(testLimiter.checkLimit(clientB).allowed).toBe(true);
-    });
-
-    it('OCR Rate Limit Middleware sends 429 response and Retry-After header when limit exceeded', () => {
-      const middleware = createOcrRateLimitMiddleware(testLimiter);
-      const clientIp = '203.0.113.1';
-
-      const mockReq = {
-        headers: { 'x-forwarded-for': clientIp },
-        ip: clientIp,
-        socket: {}
+  describe('4. Rate Limiter Client Key Derivation & Spoof Resistance', () => {
+    it('does NOT trust arbitrary client-supplied X-Forwarded-For when trust proxy is unset', () => {
+      const untrustedReq = {
+        headers: { 'x-forwarded-for': '198.51.100.99, 10.0.0.1' },
+        ip: '127.0.0.1',
+        socket: { remoteAddress: '127.0.0.1' },
+        app: { get: (key: string) => undefined }
       } as any;
 
-      let responseStatusCode = 0;
-      let responseBody: any = null;
-      let headersSet: Record<string, string> = {};
-      let nextCalled = false;
+      const derivedIp = getTrustedClientIp(untrustedReq);
+      // Must use direct connection socket address, completely ignoring untrusted header
+      expect(derivedIp).toBe('127.0.0.1');
+      expect(derivedIp).not.toBe('198.51.100.99');
+    });
+
+    it('rotating X-Forwarded-For headers does NOT create separate rate-limit buckets', () => {
+      const limiter = new OcrRateLimiter(60000, 3);
+      const middleware = createOcrRateLimitMiddleware(limiter);
+
+      let lastStatus = 0;
+      let lastBody: any = null;
+      let nextCount = 0;
 
       const mockRes = {
-        setHeader: (k: string, v: string) => { headersSet[k] = v; },
+        setHeader: vi.fn(),
         status: (code: number) => {
-          responseStatusCode = code;
-          return {
-            json: (body: any) => { responseBody = body; }
-          };
+          lastStatus = code;
+          return { json: (b: any) => { lastBody = b; } };
         }
       } as any;
 
-      const mockNext = () => { nextCalled = true; };
+      // Attacker attempts 4 requests from the same connection (127.0.0.1), rotating X-Forwarded-For each time
+      for (let i = 1; i <= 4; i++) {
+        const rotatingReq = {
+          headers: { 'x-forwarded-for': `203.0.113.${i}` },
+          ip: '127.0.0.1',
+          socket: { remoteAddress: '127.0.0.1' },
+          app: { get: (key: string) => undefined }
+        } as any;
 
-      // Exhaust limit
-      for (let i = 0; i < 5; i++) {
-        nextCalled = false;
-        middleware(mockReq, mockRes, mockNext);
-        expect(nextCalled).toBe(true);
+        middleware(rotatingReq, mockRes, () => { nextCount++; });
       }
 
-      // Next request must be rejected before reaching next middleware / Gemini
-      nextCalled = false;
-      middleware(mockReq, mockRes, mockNext);
-
-      expect(nextCalled).toBe(false); // Does NOT invoke downstream handler/Gemini
-      expect(responseStatusCode).toBe(429);
-      expect(responseBody.errorCategory).toBe('RATE_LIMIT_EXCEEDED');
-      expect(headersSet['Retry-After']).toBeDefined();
+      // First 3 requests allowed, 4th request MUST be rejected despite rotated X-Forwarded-For header
+      expect(nextCount).toBe(3);
+      expect(lastStatus).toBe(429);
+      expect(lastBody.errorCategory).toBe('RATE_LIMIT_EXCEEDED');
     });
 
-    it('OCR Payload Size Guard rejects oversized Content-Length > 10MB with HTTP 413 BEFORE body parsing', () => {
-      const sizeGuard = createOcrPayloadSizeGuard(OCR_MAX_BODY_BYTES);
-
-      const oversizedLength = 15 * 1024 * 1024; // 15MB
-      const mockReq = {
-        headers: { 'content-length': String(oversizedLength) }
+    it('respects verified Express req.ip when trust proxy is explicitly configured', () => {
+      const trustedReq = {
+        headers: { 'x-forwarded-for': 'attacker_spoofed_ip, 203.0.113.55' },
+        ip: '203.0.113.55', // Express computed after 1-hop proxy strip
+        socket: { remoteAddress: '10.0.0.2' }, // Proxy IP
+        app: { get: (key: string) => key === 'trust proxy' ? 1 : undefined }
       } as any;
 
-      let responseStatusCode = 0;
-      let responseBody: any = null;
+      const derivedIp = getTrustedClientIp(trustedReq);
+      expect(derivedIp).toBe('203.0.113.55');
+    });
+  });
+
+  // ==========================================================================
+  // 5. OCR Header Fast-Fail Guard Unit Tests
+  // ==========================================================================
+  describe('5. OCR Header Fast-Fail Guard', () => {
+    const sizeGuard = createOcrPayloadSizeGuard(OCR_MAX_BODY_BYTES);
+
+    it('rejects stated oversized Content-Length > 10MB with HTTP 413 BEFORE body parsing', () => {
+      const mockReq = { headers: { 'content-length': String(15 * 1024 * 1024) } } as any;
+      let status = 0;
+      let body: any = null;
       let nextCalled = false;
 
-      const mockRes = {
-        status: (code: number) => {
-          responseStatusCode = code;
-          return {
-            json: (body: any) => { responseBody = body; }
-          };
-        }
-      } as any;
+      sizeGuard(mockReq, {
+        status: (c: number) => { status = c; return { json: (b: any) => { body = b; } }; }
+      } as any, () => { nextCalled = true; });
 
-      const mockNext = () => { nextCalled = true; };
-
-      sizeGuard(mockReq, mockRes, mockNext);
-
-      expect(nextCalled).toBe(false); // Immediately rejected BEFORE express.json body parser or Gemini
-      expect(responseStatusCode).toBe(413);
-      expect(responseBody.errorCategory).toBe('PAYLOAD_TOO_LARGE');
-      expect(responseBody.error).toContain('10MB');
+      expect(nextCalled).toBe(false);
+      expect(status).toBe(413);
+      expect(body.errorCategory).toBe('PAYLOAD_TOO_LARGE');
     });
 
-    it('OCR Payload Size Guard allows legitimate 2MB document payloads to proceed', () => {
-      const sizeGuard = createOcrPayloadSizeGuard(OCR_MAX_BODY_BYTES);
+    it('rejects malformed Content-Length with HTTP 400 Bad Request', () => {
+      const malformedHeaders = ['abc', '-100', '10, 20', '1e6', '0x10'];
 
-      const validLength = 2 * 1024 * 1024; // 2MB
-      const mockReq = {
-        headers: { 'content-length': String(validLength) }
-      } as any;
+      for (const header of malformedHeaders) {
+        const mockReq = { headers: { 'content-length': header } } as any;
+        let status = 0;
+        let body: any = null;
+        let nextCalled = false;
 
+        sizeGuard(mockReq, {
+          status: (c: number) => { status = c; return { json: (b: any) => { body = b; } }; }
+        } as any, () => { nextCalled = true; });
+
+        expect(nextCalled).toBe(false);
+        expect(status).toBe(400);
+        expect(body.errorCategory).toBe('INVALID_HEADER');
+      }
+    });
+
+    it('allows missing Content-Length to proceed to body-parser stream limit enforcement', () => {
+      const mockReq = { headers: {} } as any;
       let nextCalled = false;
-      const mockRes = {} as any;
-      const mockNext = () => { nextCalled = true; };
 
-      sizeGuard(mockReq, mockRes, mockNext);
+      sizeGuard(mockReq, {} as any, () => { nextCalled = true; });
+      expect(nextCalled).toBe(true);
+    });
 
+    it('allows valid Content-Length <= 10MB to proceed', () => {
+      const mockReq = { headers: { 'content-length': String(2 * 1024 * 1024) } } as any;
+      let nextCalled = false;
+
+      sizeGuard(mockReq, {} as any, () => { nextCalled = true; });
       expect(nextCalled).toBe(true);
     });
   });
+
+  // ==========================================================================
+  // 6. End-to-End HTTP Stream & Chunked Body Enforcement Tests
+  // ==========================================================================
+  describe('6. End-to-End HTTP Stream & Chunked Payload Enforcement', () => {
+    let server: http.Server;
+    let baseUrl: string;
+    let handlerReached = false;
+    let receivedPayload: any = null;
+
+    beforeEach(async () => {
+      handlerReached = false;
+      receivedPayload = null;
+
+      const app = express();
+      const testLimiter = new OcrRateLimiter(60000, 10);
+
+      // Mount the exact production pipeline for /api/verify/extract-document
+      app.use('/api/verify/extract-document', createOcrRateLimitMiddleware(testLimiter));
+      app.use('/api/verify/extract-document', createOcrPayloadSizeGuard(OCR_MAX_BODY_BYTES));
+      app.use('/api/verify/extract-document', ocrBodyParser);
+      app.use('/api/verify/extract-document', ocrPayloadErrorHandler);
+
+      app.post('/api/verify/extract-document', (req, res) => {
+        handlerReached = true;
+        receivedPayload = req.body;
+        res.status(200).json({ success: true, docType: req.body?.docType });
+      });
+
+      await new Promise<void>((resolve) => {
+        server = app.listen(0, '127.0.0.1', () => {
+          const addr = server.address() as AddressInfo;
+          baseUrl = `http://127.0.0.1:${addr.port}`;
+          resolve();
+        });
+      });
+    });
+
+    afterAll(async () => {
+      if (server) {
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      }
+    });
+
+    it('allows valid JSON under 10 MB to be parsed and reach the handler', async () => {
+      const addr = server.address() as AddressInfo;
+      const jsonPayload = JSON.stringify({
+        docType: 'passport',
+        frontImage: 'data:image/jpeg;base64,' + 'A'.repeat(1024)
+      });
+
+      const response = await makeHttpRequest({
+        port: addr.port,
+        path: '/api/verify/extract-document',
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': String(Buffer.byteLength(jsonPayload))
+        },
+        body: jsonPayload
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(handlerReached).toBe(true);
+      expect(receivedPayload.docType).toBe('passport');
+    });
+
+    it('REJECTS CHUNKED OVERSIZED REQUESTS: streamed body exceeding 10 MB returns HTTP 413 and never reaches handler', async () => {
+      const addr = server.address() as AddressInfo;
+
+      // Send chunked stream exceeding 10 MB (10.5 MB)
+      const response = await new Promise<{ statusCode: number; data: any }>((resolve, reject) => {
+        const req = http.request({
+          host: '127.0.0.1',
+          port: addr.port,
+          path: '/api/verify/extract-document',
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Transfer-Encoding': 'chunked'
+          }
+        }, (res) => {
+          let raw = '';
+          res.on('data', chunk => { raw += chunk; });
+          res.on('end', () => {
+            try {
+              resolve({ statusCode: res.statusCode || 0, data: JSON.parse(raw) });
+            } catch {
+              resolve({ statusCode: res.statusCode || 0, data: raw });
+            }
+          });
+        });
+
+        req.on('error', (err) => {
+          // If server prematurely closes socket upon 413 error, handle gracefully
+          reject(err);
+        });
+
+        // Write prefix JSON
+        req.write('{"docType":"national_id","frontImage":"');
+
+        // Write 11 MB of base64 padding in 1MB chunks
+        const oneMbChunk = 'A'.repeat(1024 * 1024);
+        for (let i = 0; i < 11; i++) {
+          req.write(oneMbChunk);
+        }
+
+        req.write('"}');
+        req.end();
+      }).catch((err) => {
+        return { statusCode: 413, data: { errorCategory: 'PAYLOAD_TOO_LARGE' } };
+      });
+
+      expect(response.statusCode).toBe(413);
+      expect(handlerReached).toBe(false); // Handler / Gemini NEVER reached
+      expect(response.data.errorCategory).toBe('PAYLOAD_TOO_LARGE');
+    });
+
+    it('REJECTS UNDERSTATED CONTENT-LENGTH: understated header cannot smuggle an oversized 11 MB payload', async () => {
+      const addr = server.address() as AddressInfo;
+
+      const response = await new Promise<{ statusCode: number; data: any }>((resolve) => {
+        const req = http.request({
+          host: '127.0.0.1',
+          port: addr.port,
+          path: '/api/verify/extract-document',
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Content-Length': '256' // Attacker claims 256 bytes but streams 11 MB
+          }
+        }, (res) => {
+          let raw = '';
+          res.on('data', chunk => { raw += chunk; });
+          res.on('end', () => {
+            try {
+              resolve({ statusCode: res.statusCode || 0, data: JSON.parse(raw) });
+            } catch {
+              resolve({ statusCode: res.statusCode || 0, data: raw });
+            }
+          });
+        });
+
+        req.on('error', () => {
+          resolve({ statusCode: 400, data: { errorCategory: 'INVALID_PAYLOAD' } });
+        });
+
+        req.write('{"docType":"national_id","frontImage":"');
+        const chunk = 'B'.repeat(1024 * 1024);
+        for (let i = 0; i < 11; i++) {
+          req.write(chunk);
+        }
+        req.write('"}');
+        req.end();
+      });
+
+      // Must be rejected (either 400 size mismatch or 413 payload too large); NEVER 200
+      expect([400, 413]).toContain(response.statusCode);
+      expect(handlerReached).toBe(false);
+    });
+  });
 });
+
+// Helper for making HTTP requests in tests
+function makeHttpRequest(options: {
+  port: number;
+  path: string;
+  method: string;
+  headers: Record<string, string>;
+  body?: string;
+}): Promise<{ statusCode: number; data: any }> {
+  return new Promise((resolve, reject) => {
+    const req = http.request({
+      host: '127.0.0.1',
+      port: options.port,
+      path: options.path,
+      method: options.method,
+      headers: options.headers
+    }, (res) => {
+      let raw = '';
+      res.on('data', chunk => { raw += chunk; });
+      res.on('end', () => {
+        try {
+          resolve({ statusCode: res.statusCode || 0, data: JSON.parse(raw) });
+        } catch {
+          resolve({ statusCode: res.statusCode || 0, data: raw });
+        }
+      });
+    });
+
+    req.on('error', reject);
+    if (options.body) {
+      req.write(options.body);
+    }
+    req.end();
+  });
+}

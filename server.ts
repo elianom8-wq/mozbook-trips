@@ -31,6 +31,9 @@ import { calculateCommission } from "./src/config/platformCommission";
 import {
   createOcrPayloadSizeGuard,
   createOcrRateLimitMiddleware,
+  ocrBodyParser,
+  ocrPayloadErrorHandler,
+  OCR_MAX_BODY_BYTES,
   sanitizeReviewSubmission,
   sanitizeCheckInSubmission,
   sanitizeLegalAcceptanceSubmission
@@ -87,18 +90,32 @@ async function getImagePart(imageStr?: string): Promise<{ inlineData: { mimeType
 
 async function startServer() {
   const app = express();
+
+  // Configure reverse proxy trust only if explicitly provided in environment topology
+  if (process.env.TRUST_PROXY) {
+    const tp = process.env.TRUST_PROXY.trim();
+    app.set('trust proxy', tp === 'true' ? true : (!isNaN(Number(tp)) ? Number(tp) : tp));
+  }
+
   const rawPort = process.env.PORT;
   const parsedPort = rawPort ? parseInt(rawPort, 10) : 3000;
   const PORT = (!isNaN(parsedPort) && parsedPort > 0 && parsedPort <= 65535) ? parsedPort : 3000;
   const httpServer = http.createServer(app);
 
-  // Phase 2B: Dedicated pre-parsing OCR payload size guard (10MB) and in-memory rate limiter.
-  // The size guard inspects Content-Length before oversized request bodies are fully parsed or buffered.
-  // Note: The in-memory sliding rate limiter is bounded per server process and does not share state across Cloud Run instances.
-  app.use('/api/verify/extract-document', createOcrPayloadSizeGuard());
+  // Phase 2C: Dedicated OCR middleware pipeline for /api/verify/extract-document
+  // 1. Rate limiter: enforces 10 req/15 min quota BEFORE body parsing and BEFORE Gemini
   app.use('/api/verify/extract-document', createOcrRateLimitMiddleware());
 
-  // JSON payload parser with rawBody capture for cryptographic webhook signature verification
+  // 2. Fast-fail header guard: immediately rejects malformed Content-Length (400) or stated oversized > 10MB (413) before buffering
+  app.use('/api/verify/extract-document', createOcrPayloadSizeGuard(OCR_MAX_BODY_BYTES));
+
+  // 3. Dedicated 10MB parser: strictly enforces 10MB limit during stream receiving/parsing (chunked, missing, or understated Content-Length)
+  app.use('/api/verify/extract-document', ocrBodyParser);
+
+  // 4. Dedicated error handler: formats 413 entity.too.large into consistent safe JSON response
+  app.use('/api/verify/extract-document', ocrPayloadErrorHandler);
+
+  // Global JSON payload parser with rawBody capture for all other routes (bookings, payments, webhooks, etc.)
   app.use(express.json({ 
     limit: '20mb',
     verify: (req: any, _res, buf) => {

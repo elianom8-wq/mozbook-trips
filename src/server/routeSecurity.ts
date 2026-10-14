@@ -1,4 +1,4 @@
-import type { Request, Response, NextFunction } from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 
 /**
  * MozBook Phase 2B Route Security & Verification Module
@@ -92,15 +92,50 @@ export class OcrRateLimiter {
 export const defaultOcrRateLimiter = new OcrRateLimiter();
 
 /**
- * Middleware: Enforces request body size limit BEFORE body parsing or buffering.
- * Checks the Content-Length header and rejects oversized payloads with HTTP 413.
+ * Safely derives the client identifier for rate limiting.
+ *
+ * ARCHITECTURAL NOTICE ON REVERSE PROXIES & TOPOLOGY:
+ * In untrusted or direct network environments, headers such as `X-Forwarded-For` are client-controlled
+ * and can be arbitrarily forged or rotated by malicious callers to bypass IP-based rate limiting.
+ * Therefore, arbitrary forwarding headers MUST NOT be trusted by default.
+ *
+ * If the application is explicitly configured with Express `trust proxy` (e.g. `app.set('trust proxy', 1)`
+ * behind a verified single-hop reverse proxy such as Google Cloud Run / GFE), Express's built-in `req.ip`
+ * resolves the client IP securely by counting hops from the right, discarding preceding client-forged headers.
+ * Otherwise, the direct network connection address (`req.socket.remoteAddress`) is strictly used,
+ * ensuring untrusted forwarding headers cannot provide a fresh rate-limit identity.
+ */
+export function getTrustedClientIp(req: Request): string {
+  const isProxyTrusted = Boolean(req.app && req.app.get('trust proxy'));
+  if (isProxyTrusted && req.ip) {
+    return req.ip;
+  }
+  return req.socket?.remoteAddress || req.ip || 'unknown-client';
+}
+
+/**
+ * Fast-fail header guard: Rejects requests with malformed Content-Length (HTTP 400)
+ * or stated oversized Content-Length > 10MB (HTTP 413) BEFORE reading or buffering stream chunks.
+ * Note: Stream-level byte limits for chunked, missing, or understated Content-Length
+ * are strictly enforced by the downstream `ocrBodyParser`.
  */
 export function createOcrPayloadSizeGuard(maxBytes: number = OCR_MAX_BODY_BYTES) {
   return (req: Request, res: Response, next: NextFunction): void => {
     const contentLengthHeader = req.headers['content-length'];
-    if (contentLengthHeader) {
-      const contentLength = parseInt(contentLengthHeader, 10);
-      if (!isNaN(contentLength) && contentLength > maxBytes) {
+    if (contentLengthHeader !== undefined) {
+      const trimmed = String(contentLengthHeader).trim();
+      // Safely validate decimal integer format; reject non-digits or negative values
+      if (!/^\d+$/.test(trimmed)) {
+        res.status(400).json({
+          success: false,
+          errorCategory: 'INVALID_HEADER',
+          error: 'Bad Request: Malformed Content-Length header.'
+        });
+        return;
+      }
+
+      const contentLength = parseInt(trimmed, 10);
+      if (contentLength > maxBytes) {
         res.status(413).json({
           success: false,
           errorCategory: 'PAYLOAD_TOO_LARGE',
@@ -114,18 +149,55 @@ export function createOcrPayloadSizeGuard(maxBytes: number = OCR_MAX_BODY_BYTES)
 }
 
 /**
+ * Dedicated 10MB JSON body parser for OCR document extraction.
+ * Enforces a strict 10MB limit during stream receiving and parsing,
+ * protecting against chunked transfers and understated Content-Length.
+ * Captures rawBody buffer for any downstream integrity verification.
+ */
+export const ocrBodyParser = express.json({
+  limit: OCR_MAX_BODY_BYTES,
+  verify: (req: any, _res, buf) => {
+    req.rawBody = buf;
+  }
+});
+
+/**
+ * Route-specific error handler for OCR body parsing errors.
+ * Catches 413 entity.too.large (from stream parsing) and returns a consistent safe JSON response.
+ */
+export function ocrPayloadErrorHandler(err: any, req: Request, res: Response, next: NextFunction): void {
+  if (err) {
+    if (err.status === 413 || err.statusCode === 413 || err.type === 'entity.too.large') {
+      res.status(413).json({
+        success: false,
+        errorCategory: 'PAYLOAD_TOO_LARGE',
+        error: `Payload Too Large: Document extraction payload exceeds maximum allowed size of ${Math.round(OCR_MAX_BODY_BYTES / (1024 * 1024))}MB.`
+      });
+      return;
+    }
+    if (err.status === 400 || err.statusCode === 400 || err.type === 'request.size.invalid') {
+      res.status(400).json({
+        success: false,
+        errorCategory: 'INVALID_PAYLOAD',
+        error: 'Bad Request: Invalid request payload size or malformed JSON.'
+      });
+      return;
+    }
+    return next(err);
+  }
+  next();
+}
+
+/**
  * Middleware: Enforces per-instance rate limiting on OCR document extraction.
- * Rejects requests exceeding threshold with HTTP 429 and Retry-After header.
+ * Derives client identity safely via `getTrustedClientIp(req)` to prevent forwarding-header evasion.
+ * Rejects requests exceeding threshold with HTTP 429 and Retry-After header before body parsing and Gemini.
  */
 export function createOcrRateLimitMiddleware(limiter: OcrRateLimiter = defaultOcrRateLimiter) {
   return (req: Request, res: Response, next: NextFunction): void => {
-    const clientIp = 
-      (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
-      req.ip ||
-      req.socket.remoteAddress ||
-      'unknown-client';
+    const clientKey = getTrustedClientIp(req);
 
-    const check = limiter.checkLimit(clientIp);
+    const check = limiter.checkLimit(clientKey);
     if (!check.allowed) {
       res.setHeader('Retry-After', String(check.retryAfterSeconds || 60));
       res.status(429).json({
