@@ -1453,47 +1453,81 @@ Output strictly a JSON object matching this schema:
       }
     }
 
-    const dedupKey = `${userEmail || hostName}_${expiryDate}`;
+    const dedupKey = `${hostId || userEmail || hostName}_${expiryDate}`;
+    const safeDocId = dedupKey.replace(/[^a-zA-Z0-9_-]/g, '_');
     const now = Date.now();
     let existing = dispatchedRenewalReminders.get(dedupKey);
+    let isDuplicate = false;
+    let existingDispatchedAt: string | undefined;
 
-    // Persistent deduplication check from Firestore across server restarts
-    if (!existing) {
-      try {
-        const adminDb = getPrivilegedFirestore();
-        const safeDocId = dedupKey.replace(/[^a-zA-Z0-9_-]/g, '_');
-        const docSnap = await adminDb.collection('compliance_reminders').doc(safeDocId).get();
+    // Concurrency-safe persistent check and record in Firestore
+    try {
+      const adminDb = getPrivilegedFirestore();
+      const reminderRef = adminDb.collection('compliance_reminders').doc(safeDocId);
+
+      await adminDb.runTransaction(async (transaction: any) => {
+        const docSnap = await transaction.get(reminderRef);
         if (docSnap.exists) {
           const d = docSnap.data()!;
-          existing = { dispatchedAt: d.dispatchedAt, expiryDate: d.expiryDate };
-          dispatchedRenewalReminders.set(dedupKey, existing);
+          const diffMs = now - new Date(d.dispatchedAt).getTime();
+          // 24 hour cooldown
+          if (diffMs < 24 * 60 * 60 * 1000) {
+            isDuplicate = true;
+            existingDispatchedAt = d.dispatchedAt;
+            existing = { dispatchedAt: d.dispatchedAt, expiryDate: d.expiryDate };
+            dispatchedRenewalReminders.set(dedupKey, existing);
+            return;
+          }
         }
-      } catch {}
+
+        const record = {
+          dispatchedAt: new Date().toISOString(),
+          expiryDate,
+          userEmail,
+          hostId,
+          hostName,
+          docType,
+          daysUntilExpiry,
+          type: 'renewal_reminder',
+          deliveryMethod: 'in_app_persisted',
+          providerConfigured: false
+        };
+        transaction.set(reminderRef, record, { merge: true });
+        dispatchedRenewalReminders.set(dedupKey, record);
+      });
+    } catch {
+      // In-memory atomic fallback when Firestore is unavailable
+      if (existing && (now - new Date(existing.dispatchedAt).getTime()) < 24 * 60 * 60 * 1000) {
+        isDuplicate = true;
+        existingDispatchedAt = existing.dispatchedAt;
+      } else {
+        const record = {
+          dispatchedAt: new Date().toISOString(),
+          expiryDate,
+          userEmail,
+          hostId,
+          hostName,
+          docType,
+          daysUntilExpiry,
+          type: 'renewal_reminder',
+          deliveryMethod: 'in_app_persisted',
+          providerConfigured: false
+        };
+        dispatchedRenewalReminders.set(dedupKey, record);
+      }
     }
 
-    if (existing && (now - new Date(existing.dispatchedAt).getTime()) < 24 * 60 * 60 * 1000) {
+    if (isDuplicate || (existing && (now - new Date(existing.dispatchedAt).getTime()) < 24 * 60 * 60 * 1000)) {
       return res.json({
         success: true,
         alreadyDispatched: true,
-        dispatchedAt: existing.dispatchedAt,
-        message: `Renewal reminder was already dispatched on ${existing.dispatchedAt}. Next reminder scheduled per compliance cadence.`,
+        dispatchedAt: existingDispatchedAt || existing?.dispatchedAt,
+        message: `Renewal reminder was already dispatched on ${existingDispatchedAt || existing?.dispatchedAt}. Next reminder scheduled per compliance cadence.`,
+        deliveryStatus: 'recorded_in_system',
+        providerConfigured: false,
+        schedulerConfigured: false
       });
     }
-
-    const record = {
-      dispatchedAt: new Date().toISOString(),
-      expiryDate,
-      userEmail,
-      hostName,
-      type: 'renewal_reminder'
-    };
-    dispatchedRenewalReminders.set(dedupKey, record);
-
-    try {
-      const adminDb = getPrivilegedFirestore();
-      const safeDocId = dedupKey.replace(/[^a-zA-Z0-9_-]/g, '_');
-      await adminDb.collection('compliance_reminders').doc(safeDocId).set(record, { merge: true });
-    } catch {}
 
     const portalUrl = `${process.env.HOST_PORTAL_URL || ''}/host/verify`;
     console.log(`[Reminder] Dispatching renewal alert to host ${hostName} (${userEmail}): ${docType} expires on ${expiryDate} (${daysUntilExpiry} days left). Direct action URL: ${portalUrl}`);
@@ -1501,9 +1535,12 @@ Output strictly a JSON object matching this schema:
     res.json({
       success: true,
       alreadyDispatched: false,
-      message: `Document renewal reminder has been scheduled and sent to ${userEmail || hostName}. Host notified to renew before ${expiryDate}.`,
+      message: `Document renewal reminder has been scheduled and sent to ${userEmail || hostName}. Host notified to renew before ${expiryDate}. Note: External email provider (SMTP/Resend/SendGrid) and automated scheduler (Cloud Scheduler) are not configured. Reminder is persisted in MozBook compliance store and host portal.`,
       sentAt: new Date().toISOString(),
-      renewalUrl: portalUrl
+      renewalUrl: portalUrl,
+      deliveryStatus: 'recorded_in_system',
+      providerConfigured: false,
+      schedulerConfigured: false
     });
   });
 
@@ -1522,11 +1559,44 @@ Output strictly a JSON object matching this schema:
 
     for (const item of items) {
       const milestone = item.daysUntilExpiry <= 0 ? 'grace_period' : item.daysUntilExpiry <= 30 ? '30d' : item.daysUntilExpiry <= 60 ? '60d' : '90d';
-      const dedupKey = `${item.userEmail || item.hostId}_${item.expiryDate}_${milestone}`;
+      const dedupKey = `${item.hostId || item.userEmail}_${item.expiryDate}_${milestone}`;
+      const safeDocId = dedupKey.replace(/[^a-zA-Z0-9_-]/g, '_');
+
       if (dispatchedRenewalReminders.has(dedupKey)) {
         skippedCount++;
         continue;
       }
+
+      let isDuplicate = false;
+      try {
+        const adminDb = getPrivilegedFirestore();
+        const docRef = adminDb.collection('compliance_reminders').doc(safeDocId);
+        const docSnap = await docRef.get();
+        if (docSnap.exists) {
+          isDuplicate = true;
+          dispatchedRenewalReminders.set(dedupKey, {
+            dispatchedAt: docSnap.data()?.dispatchedAt || new Date().toISOString(),
+            expiryDate: item.expiryDate
+          });
+        } else {
+          await docRef.set({
+            dispatchedAt: new Date().toISOString(),
+            expiryDate: item.expiryDate,
+            hostId: item.hostId,
+            userEmail: item.userEmail,
+            milestone,
+            type: 'renewal_reminder',
+            deliveryMethod: 'in_app_persisted',
+            providerConfigured: false
+          });
+        }
+      } catch {}
+
+      if (isDuplicate) {
+        skippedCount++;
+        continue;
+      }
+
       dispatchedRenewalReminders.set(dedupKey, {
         dispatchedAt: new Date().toISOString(),
         expiryDate: item.expiryDate
@@ -1538,7 +1608,11 @@ Output strictly a JSON object matching this schema:
       success: true,
       dispatchedCount,
       skippedCount,
-      processedAt: new Date().toISOString()
+      processedAt: new Date().toISOString(),
+      deliveryStatus: 'recorded_in_system',
+      providerConfigured: false,
+      schedulerConfigured: false,
+      message: 'Compliance renewal check completed. Dispatches persisted in MozBook compliance store. Note: External email delivery and automated scheduling are not configured.'
     });
   });
 
@@ -1575,71 +1649,135 @@ Output strictly a JSON object matching this schema:
       });
     }
 
+    // Authoritative Firestore Listing Owner Verification
+    // Verify authoritative owner in Firestore rather than trusting request-body host IDs or emails
+    let authoritativeHostId = hostId;
+    let authoritativeHostEmail = hostEmail;
+    let listingFound = false;
+
+    try {
+      const adminDb = getPrivilegedFirestore();
+      let listingDoc = await adminDb.collection('listings').doc(listingId).get();
+      if (!listingDoc.exists) {
+        listingDoc = await adminDb.collection('activities_trips').doc(listingId).get();
+      }
+      if (listingDoc.exists) {
+        listingFound = true;
+        const lData = listingDoc.data()!;
+        authoritativeHostId = lData.hostId || lData.userId || lData.ownerId || authoritativeHostId;
+        authoritativeHostEmail = lData.hostEmail || lData.contactEmail || lData.email || authoritativeHostEmail;
+      }
+    } catch (lookupErr) {
+      console.warn('[Seasonal Reminder] Listing authoritative lookup skipped/failed:', lookupErr);
+    }
+
     if (caller && !isCronAuthorized) {
-      const isHost = caller.uid === hostId || (caller.email && hostEmail && caller.email.toLowerCase() === hostEmail.toLowerCase());
       const isAdmin = caller.email === 'admin@mozbook.mz' || caller.email === 'mozbookinfo@gmail.com';
-      if (!isHost && !isAdmin) {
-        return res.status(403).json({
-          success: false,
-          error: "Unauthorized: You can only dispatch seasonal reminders for your own listings."
-        });
+      if (!isAdmin) {
+        const isAuthoritativeOwner = 
+          (authoritativeHostId && caller.uid === authoritativeHostId) ||
+          (authoritativeHostEmail && caller.email && caller.email.toLowerCase() === authoritativeHostEmail.toLowerCase()) ||
+          (!listingFound && (caller.uid === hostId || (caller.email && hostEmail && caller.email.toLowerCase() === hostEmail.toLowerCase())));
+
+        if (!isAuthoritativeOwner) {
+          return res.status(403).json({
+            success: false,
+            error: "Unauthorized: You can only dispatch seasonal reminders for your own listings."
+          });
+        }
       }
     }
 
     // Deduplication check: do not repeatedly dispatch for same upcoming review year
     const dedupKey = `${listingId}_${upcomingYear}`;
+    const safeDocId = dedupKey.replace(/[^a-zA-Z0-9_-]/g, '_');
     let existing = dispatchedSeasonalReminders.get(dedupKey);
+    let isDuplicate = false;
+    let existingDispatchedAt: string | undefined;
 
-    // Persistent deduplication check from Firestore across server restarts
-    if (!existing) {
-      try {
-        const adminDb = getPrivilegedFirestore();
-        const safeDocId = dedupKey.replace(/[^a-zA-Z0-9_-]/g, '_');
-        const docSnap = await adminDb.collection('seasonal_reminders').doc(safeDocId).get();
+    // Concurrency-safe atomic transaction check and insert
+    try {
+      const adminDb = getPrivilegedFirestore();
+      const reminderRef = adminDb.collection('seasonal_reminders').doc(safeDocId);
+
+      await adminDb.runTransaction(async (transaction: any) => {
+        const docSnap = await transaction.get(reminderRef);
         if (docSnap.exists) {
+          isDuplicate = true;
           const d = docSnap.data()!;
+          existingDispatchedAt = d.dispatchedAt;
           existing = { dispatchedAt: d.dispatchedAt, upcomingYear: d.upcomingYear, hostEmail: d.hostEmail };
           dispatchedSeasonalReminders.set(dedupKey, existing);
+          return;
         }
-      } catch {}
+
+        const record = {
+          dispatchedAt: new Date().toISOString(),
+          upcomingYear: Number(upcomingYear),
+          hostId: authoritativeHostId || hostId,
+          hostEmail: authoritativeHostEmail || hostEmail,
+          listingId,
+          listingTitle,
+          seasonalTag,
+          offerName,
+          status: 'recorded',
+          deliveryMethod: 'in_app_persisted',
+          providerConfigured: false
+        };
+
+        transaction.set(reminderRef, record);
+        dispatchedSeasonalReminders.set(dedupKey, record);
+      });
+    } catch {
+      // In-memory fallback
+      if (existing) {
+        isDuplicate = true;
+        existingDispatchedAt = existing.dispatchedAt;
+      } else {
+        const record = {
+          dispatchedAt: new Date().toISOString(),
+          upcomingYear: Number(upcomingYear),
+          hostId: authoritativeHostId || hostId,
+          hostEmail: authoritativeHostEmail || hostEmail,
+          listingId,
+          listingTitle,
+          seasonalTag,
+          offerName,
+          status: 'recorded',
+          deliveryMethod: 'in_app_persisted',
+          providerConfigured: false
+        };
+        dispatchedSeasonalReminders.set(dedupKey, record);
+      }
     }
 
-    if (existing) {
+    if (isDuplicate || existing) {
       return res.json({
         success: true,
         alreadyDispatched: true,
-        dispatchedAt: existing.dispatchedAt,
-        message: `Annual review alert was already dispatched to owner on ${existing.dispatchedAt} for ${upcomingYear}. Preventing duplicate notification.`
+        dispatchedAt: existingDispatchedAt || existing?.dispatchedAt,
+        message: `Annual review alert was already dispatched to owner on ${existingDispatchedAt || existing?.dispatchedAt} for ${upcomingYear}. Preventing duplicate notification.`,
+        deliveryStatus: 'recorded_in_system',
+        providerConfigured: false,
+        schedulerConfigured: false
       });
     }
-
-    const record = {
-      dispatchedAt: new Date().toISOString(),
-      upcomingYear: Number(upcomingYear),
-      hostEmail,
-      listingId,
-      listingTitle
-    };
-    dispatchedSeasonalReminders.set(dedupKey, record);
-
-    try {
-      const adminDb = getPrivilegedFirestore();
-      const safeDocId = dedupKey.replace(/[^a-zA-Z0-9_-]/g, '_');
-      await adminDb.collection('seasonal_reminders').doc(safeDocId).set(record, { merge: true });
-    } catch {}
 
     const reviewUrl = `${process.env.HOST_PORTAL_URL || ''}/partner?reviewListingId=${encodeURIComponent(listingId)}#seasonal-reviews`;
 
     console.log(
-      `[Seasonal Review Alert] Dispatched review alert to owner ${hostName || hostId} (${hostEmail || 'no-email'}) for listing '${listingTitle || listingId}' - Season: ${seasonalTag || 'Seasonal'} ${upcomingYear}. Review URL: ${reviewUrl}`
+      `[Seasonal Review Alert] Dispatched review alert to owner ${authoritativeHostId || hostId} (${authoritativeHostEmail || hostEmail || 'no-email'}) for listing '${listingTitle || listingId}' - Season: ${seasonalTag || 'Seasonal'} ${upcomingYear}. Review URL: ${reviewUrl}`
     );
 
     res.json({
       success: true,
       alreadyDispatched: false,
-      message: `Annual seasonal review alert successfully dispatched for '${listingTitle || listingId}' (${seasonalTag} ${upcomingYear}). Owner notified to review dates and pricing.`,
+      message: `Annual seasonal review alert successfully dispatched for '${listingTitle || listingId}' (${seasonalTag} ${upcomingYear}). Owner notified to review dates and pricing. Note: External email provider (SMTP/Resend/SendGrid) and automated scheduler (Cloud Scheduler) are not configured. Reminder is persisted in MozBook compliance store and host portal.`,
       reviewUrl,
-      sentAt: new Date().toISOString()
+      sentAt: new Date().toISOString(),
+      deliveryStatus: 'recorded_in_system',
+      providerConfigured: false,
+      schedulerConfigured: false
     });
   });
 
@@ -1658,10 +1796,43 @@ Output strictly a JSON object matching this schema:
 
     for (const item of items) {
       const dedupKey = `${item.listingId}_${item.upcomingYear}`;
+      const safeDocId = dedupKey.replace(/[^a-zA-Z0-9_-]/g, '_');
+
       if (dispatchedSeasonalReminders.has(dedupKey)) {
         skippedCount++;
         continue;
       }
+
+      let isDuplicate = false;
+      try {
+        const adminDb = getPrivilegedFirestore();
+        const docRef = adminDb.collection('seasonal_reminders').doc(safeDocId);
+        const docSnap = await docRef.get();
+        if (docSnap.exists) {
+          isDuplicate = true;
+          dispatchedSeasonalReminders.set(dedupKey, {
+            dispatchedAt: docSnap.data()?.dispatchedAt || new Date().toISOString(),
+            upcomingYear: Number(item.upcomingYear),
+            hostEmail: item.hostEmail
+          });
+        } else {
+          await docRef.set({
+            dispatchedAt: new Date().toISOString(),
+            upcomingYear: Number(item.upcomingYear),
+            hostEmail: item.hostEmail,
+            listingId: item.listingId,
+            status: 'recorded',
+            deliveryMethod: 'in_app_persisted',
+            providerConfigured: false
+          });
+        }
+      } catch {}
+
+      if (isDuplicate) {
+        skippedCount++;
+        continue;
+      }
+
       dispatchedSeasonalReminders.set(dedupKey, {
         dispatchedAt: new Date().toISOString(),
         upcomingYear: Number(item.upcomingYear),
@@ -1674,7 +1845,11 @@ Output strictly a JSON object matching this schema:
       success: true,
       dispatchedCount,
       skippedCount,
-      processedAt: new Date().toISOString()
+      processedAt: new Date().toISOString(),
+      deliveryStatus: 'recorded_in_system',
+      providerConfigured: false,
+      schedulerConfigured: false,
+      message: 'Seasonal review check completed. Dispatches persisted in MozBook compliance store. Note: External email delivery and automated scheduling are not configured.'
     });
   });
 

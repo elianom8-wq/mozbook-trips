@@ -72,6 +72,41 @@ export const memoryExperienceSlots = new Map<string, MemorySlotState>();
 export const memoryStaySlots = new Map<string, MemorySlotState>();
 export const memoryBookings = new Map<string, any>();
 export const memorySuspendedHosts = new Set<string>();
+export const memorySuspendedUsers = new Set<string>();
+
+/**
+ * Authoritative Customer Suspension Guard.
+ * Enforces account suspension across all MozBook booking and reservation operations.
+ * - Suspended customers cannot make new bookings.
+ */
+export async function assertCustomerNotSuspended(
+  userId: string | undefined,
+  adminDb?: any,
+  transaction?: any
+): Promise<void> {
+  if (!userId) return;
+
+  // 1. Authoritative in-memory customer suspension check
+  if (memorySuspendedUsers.has(userId)) {
+    throw new InventoryError(403, 'Booking unavailable: Customer account is currently suspended.');
+  }
+
+  // 2. Authoritative Firestore check
+  if (adminDb) {
+    try {
+      const userRef = adminDb.collection('users').doc(userId);
+      const userSnap = transaction ? await transaction.get(userRef) : await userRef.get();
+      if (userSnap.exists) {
+        const userData = userSnap.data()!;
+        if (userData.accountStatus === 'suspended' || userData.status === 'suspended') {
+          throw new InventoryError(403, 'Booking unavailable: Customer account is currently suspended.');
+        }
+      }
+    } catch (err: any) {
+      if (err instanceof InventoryError) throw err;
+    }
+  }
+}
 
 /**
  * Authoritative Host Suspension Guard.
@@ -150,6 +185,10 @@ function reserveExperienceInventoryInMemory(
   nowIso: string,
   holdExpiresAtIso: string
 ) {
+  if (params.isCustomerSuspended || (params.customerUserId && memorySuspendedUsers.has(params.customerUserId))) {
+    throw new InventoryError(403, 'Booking unavailable: Customer account is currently suspended.');
+  }
+
   if (params.isHostSuspended || (params.hostId && memorySuspendedHosts.has(params.hostId))) {
     throw new InventoryError(403, 'Booking unavailable: Host account is currently suspended for safety or compliance.');
   }
@@ -292,6 +331,7 @@ export interface ReserveExperienceParams {
   pickupRequested?: boolean;
   pickupNotes?: string;
   isHostSuspended?: boolean;
+  isCustomerSuspended?: boolean;
 }
 
 export interface ReserveStayParams {
@@ -313,6 +353,7 @@ export interface ReserveStayParams {
   travelGroupId?: string;
   idempotencyKey?: string;
   isHostSuspended?: boolean;
+  isCustomerSuspended?: boolean;
 }
 
 /**
@@ -320,6 +361,11 @@ export interface ReserveStayParams {
  * Prevents concurrent travelers from overselling the final seat.
  */
 export async function reserveExperienceInventory(params: ReserveExperienceParams) {
+  // Enforce customer suspension safeguard prior to taking any locks
+  if (params.isCustomerSuspended || (params.customerUserId && memorySuspendedUsers.has(params.customerUserId))) {
+    throw new InventoryError(403, 'Booking unavailable: Customer account is currently suspended.');
+  }
+
   // Enforce host suspension safeguard prior to taking any locks
   if (params.isHostSuspended || (params.hostId && memorySuspendedHosts.has(params.hostId))) {
     throw new InventoryError(403, 'Booking unavailable: Host account is currently suspended for safety or compliance.');
@@ -407,6 +453,8 @@ export async function reserveExperienceInventory(params: ReserveExperienceParams
       }
       const act = actSnap.data()!;
 
+      // Enforce both customer and host suspension checks authoritatively
+      await assertCustomerNotSuspended(params.customerUserId, adminDb, transaction);
       const hostId = act.hostId || params.hostId;
       await assertHostNotSuspended(hostId, adminDb, transaction);
 
@@ -594,6 +642,10 @@ function reserveStayInventoryInMemory(
   nowIso: string,
   holdExpiresAtIso: string
 ) {
+  if (params.isCustomerSuspended || (params.customerUserId && memorySuspendedUsers.has(params.customerUserId))) {
+    throw new InventoryError(403, 'Booking unavailable: Customer account is currently suspended.');
+  }
+
   if (params.isHostSuspended || (params.hostId && memorySuspendedHosts.has(params.hostId))) {
     throw new InventoryError(403, 'Booking unavailable: Host account is currently suspended for safety or compliance.');
   }
@@ -721,6 +773,11 @@ function reserveStayInventoryInMemory(
  * Authoritatively reserves accommodation units across dates with atomic Firestore transaction protection.
  */
 export async function reserveStayInventory(params: ReserveStayParams) {
+  // Enforce customer suspension safeguard prior to taking any locks
+  if (params.isCustomerSuspended || (params.customerUserId && memorySuspendedUsers.has(params.customerUserId))) {
+    throw new InventoryError(403, 'Booking unavailable: Customer account is currently suspended.');
+  }
+
   // Enforce host suspension safeguard prior to taking any locks
   if (params.isHostSuspended || (params.hostId && memorySuspendedHosts.has(params.hostId))) {
     throw new InventoryError(403, 'Booking unavailable: Host account is currently suspended for safety or compliance.');
@@ -819,6 +876,8 @@ export async function reserveStayInventory(params: ReserveStayParams) {
 
       const listing = listingSnap.data()!;
 
+      // Enforce both customer and host suspension checks authoritatively
+      await assertCustomerNotSuspended(params.customerUserId, adminDb, transaction);
       const hostId = listing.hostId || params.hostId;
       await assertHostNotSuspended(hostId, adminDb, transaction);
 
