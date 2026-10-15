@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { 
   Building2, 
@@ -37,12 +37,20 @@ import {
   Power,
   QrCode,
   Sliders,
-  AlertTriangle
+  AlertTriangle,
+  CalendarCheck
 } from 'lucide-react';
 import { doc, updateDoc, collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../context/AuthContext';
-import { Listing, getHostListings, getUserVerification, HostVerification } from '../services/listingService';
+import { Listing, getHostListings, getUserVerification, HostVerification, SpecialOffer, calculateDocumentExpiry } from '../services/listingService';
+import { 
+  calculateNextSeasonalReview, 
+  SeasonalReviewProjection, 
+  confirmSeasonalOffer, 
+  declineSeasonalOffer, 
+  sendSeasonalReviewReminder 
+} from '../services/seasonalRecurrenceService';
 import { Booking } from '../types/booking';
 import { getHostStayBookings, handleStayOperatorInventoryFailure } from '../services/bookingService';
 import { ActivityTrip, ActivityBooking } from '../types/activityTrip';
@@ -179,6 +187,43 @@ export default function PartnerDashboard() {
   const [bookingSearchQuery, setBookingSearchQuery] = useState('');
   const [statusActionLoading, setStatusActionLoading] = useState<string | null>(null);
   const [actionSuccessMsg, setActionSuccessMsg] = useState<string | null>(null);
+
+  // Seasonal Offers Annual Review Modal State (FIX #6)
+  const [seasonalReviewModal, setSeasonalReviewModal] = useState<{
+    listing: Listing;
+    offer: SpecialOffer;
+    projection: SeasonalReviewProjection;
+  } | null>(null);
+  const [confirmingSeasonal, setConfirmingSeasonal] = useState(false);
+  const [editSeasonalPrice, setEditSeasonalPrice] = useState<number>(0);
+  const [editSeasonalStartDate, setEditSeasonalStartDate] = useState<string>('');
+  const [editSeasonalEndDate, setEditSeasonalEndDate] = useState<string>('');
+  const [seasonalReviewSuccess, setSeasonalReviewSuccess] = useState<string | null>(null);
+  const [seasonalReminderSent, setSeasonalReminderSent] = useState<string | null>(null);
+
+  // Computed list of seasonal offers eligible and due for annual review
+  const pendingSeasonalReviews = useMemo(() => {
+    return listings
+      .filter(l => l.specialOffer && l.specialOffer.enabled && l.specialOffer.isSeasonal && l.specialOffer.annualRecurrenceEnabled)
+      .map(l => {
+        const projection = calculateNextSeasonalReview(l.specialOffer!);
+        return {
+          listing: l,
+          offer: l.specialOffer!,
+          projection,
+        };
+      })
+  }, [listings]);
+
+  // Document Expiry and Suspension Compliance (FIX #7)
+  const hostDocExpiry = useMemo(() => {
+    return calculateDocumentExpiry(verification?.expiryDate);
+  }, [verification?.expiryDate]);
+
+  const effectiveVerificationStatus = useMemo(() => {
+    if (!verification) return 'unsubmitted';
+    return hostDocExpiry.effectiveVerificationStatus(verification.status);
+  }, [verification, hostDocExpiry]);
 
   const loadPartnerData = async () => {
     if (!user) {
@@ -546,6 +591,125 @@ export default function PartnerDashboard() {
     }
   };
 
+  // Seasonal Offers Annual Review Handlers (FIX #6)
+  const handleOpenSeasonalReview = (listing: Listing, offer: SpecialOffer, projection: SeasonalReviewProjection) => {
+    setSeasonalReviewModal({ listing, offer, projection });
+    setEditSeasonalPrice(offer.specialPrice);
+    setEditSeasonalStartDate(projection.projectedStartDate);
+    setEditSeasonalEndDate(projection.projectedEndDate);
+    setSeasonalReviewSuccess(null);
+  };
+
+  // Deep-link direct review screen handler (FIX #6 Requirement D)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const reviewListingId = params.get('reviewListingId');
+    if (reviewListingId && listings.length > 0) {
+      const match = listings.find(l => l.id === reviewListingId);
+      if (match && match.specialOffer && match.specialOffer.isSeasonal) {
+        const proj = calculateNextSeasonalReview(match.specialOffer);
+        handleOpenSeasonalReview(match, match.specialOffer, proj);
+      }
+    }
+  }, [listings]);
+
+  const handleConfirmSeasonalReview = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!seasonalReviewModal || !seasonalReviewModal.listing.id) return;
+    setConfirmingSeasonal(true);
+    try {
+      const { listing, offer, projection } = seasonalReviewModal;
+      const success = await confirmSeasonalOffer(
+        listing.id,
+        offer,
+        projection.upcomingYear,
+        editSeasonalStartDate,
+        editSeasonalEndDate,
+        editSeasonalPrice
+      );
+      if (success) {
+        setSeasonalReviewSuccess(`Promotion confirmed and updated for ${projection.seasonName} ${projection.upcomingYear}!`);
+        setListings(prev => prev.map(l => {
+          if (l.id === listing.id && l.specialOffer) {
+            return {
+              ...l,
+              specialOffer: {
+                ...l.specialOffer,
+                startDate: editSeasonalStartDate,
+                endDate: editSeasonalEndDate,
+                specialPrice: editSeasonalPrice,
+                targetYear: projection.upcomingYear,
+                recurrenceStatus: 'confirmed',
+                lastConfirmedAt: new Date().toISOString()
+              }
+            };
+          }
+          return l;
+        }));
+        setTimeout(() => {
+          setSeasonalReviewModal(null);
+          setSeasonalReviewSuccess(null);
+        }, 1500);
+      }
+    } catch (err: any) {
+      console.error('Failed to confirm seasonal offer:', err);
+    } finally {
+      setConfirmingSeasonal(false);
+    }
+  };
+
+  const handleDeclineSeasonalReview = async (listing: Listing, offer: SpecialOffer, year: number) => {
+    if (!listing.id) return;
+    try {
+      const success = await declineSeasonalOffer(listing.id, offer, year);
+      if (success) {
+        setListings(prev => prev.map(l => {
+          if (l.id === listing.id && l.specialOffer) {
+            return {
+              ...l,
+              specialOffer: {
+                ...l.specialOffer,
+                declinedYears: [...(l.specialOffer.declinedYears || []), year],
+                recurrenceStatus: 'declined'
+              }
+            };
+          }
+          return l;
+        }));
+        if (seasonalReviewModal?.listing.id === listing.id) {
+          setSeasonalReviewModal(null);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to decline seasonal offer:', err);
+    }
+  };
+
+  const handleSendSeasonalReminder = async (listing: Listing, offer: SpecialOffer, projection: SeasonalReviewProjection) => {
+    if (!listing.id) return;
+    try {
+      const res = await sendSeasonalReviewReminder({
+        listingId: listing.id,
+        listingTitle: listing.title,
+        hostId: user?.uid || listing.hostId,
+        hostEmail: user?.email || undefined,
+        hostName: user?.displayName || listing.hostName,
+        seasonalTag: offer.seasonalTag || 'Seasonal',
+        offerName: offer.offerName,
+        upcomingYear: projection.upcomingYear,
+        projectedStartDate: projection.projectedStartDate,
+        projectedEndDate: projection.projectedEndDate,
+        reviewDueDate: projection.reviewDueDate
+      });
+      if (res.success) {
+        setSeasonalReminderSent(`Reminder alert dispatched for "${listing.title}" (${projection.seasonName} ${projection.upcomingYear}).`);
+        setTimeout(() => setSeasonalReminderSent(null), 4000);
+      }
+    } catch (err) {
+      console.error('Failed to send reminder:', err);
+    }
+  };
+
   // Operational controls for Transport services & fleet
   const handleToggleTransportStatus = async (transportId: string, currentStatus: string) => {
     const nextStatus = currentStatus === 'published' ? 'paused' : 'published';
@@ -610,6 +774,93 @@ export default function PartnerDashboard() {
     );
   }
 
+  const renderSeasonalReviewsBanner = () => {
+    if (pendingSeasonalReviews.length === 0) return null;
+    return (
+      <div className="bg-gradient-to-r from-amber-500/10 via-emerald-500/10 to-teal-500/10 border-2 border-emerald-500/40 rounded-3xl p-6 shadow-sm space-y-4">
+        {seasonalReminderSent && (
+          <div className="p-3 bg-emerald-100 text-emerald-900 border border-emerald-300 rounded-xl text-xs font-medium animate-fadeIn">
+            ✓ {seasonalReminderSent}
+          </div>
+        )}
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 rounded-2xl bg-emerald-100 text-[#008250] flex items-center justify-center shrink-0">
+              <CalendarCheck size={26} />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-600 text-white">
+                  Action Required
+                </span>
+                <span className="text-xs font-bold text-gray-500 uppercase tracking-wide">
+                  Annual Seasonal Recurrence Review
+                </span>
+              </div>
+              <h3 className="text-lg font-bold text-gray-900 mt-1">
+                {pendingSeasonalReviews.length} Seasonal Promotion{pendingSeasonalReviews.length > 1 ? 's' : ''} Awaiting Your Confirmation
+              </h3>
+              <p className="text-xs text-gray-600 max-w-2xl mt-0.5">
+                Your seasonal offers are eligible for annual review. MozBook never automatically publishes or activates recurring seasonal discounts without your explicit review and confirmation.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 pt-1">
+          {pendingSeasonalReviews.map(({ listing, offer, projection }) => (
+            <div key={listing.id} className="bg-white rounded-2xl border border-gray-200 p-4 flex flex-col justify-between shadow-2xs space-y-3">
+              <div>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-bold text-gray-900 line-clamp-1">{listing.title}</span>
+                  <span className="px-2 py-0.5 bg-amber-100 text-amber-800 rounded-md text-[10px] font-bold shrink-0">
+                    {projection.seasonName} {projection.upcomingYear}
+                  </span>
+                </div>
+                <div className="mt-2 text-xs text-gray-600 space-y-1">
+                  <div className="flex justify-between">
+                    <span>Offer Name:</span>
+                    <span className="font-semibold text-gray-900">{offer.offerName || 'Special Seasonal Offer'}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Proposed Dates:</span>
+                    <span className="font-medium text-emerald-800">{projection.projectedStartDate} to {projection.projectedEndDate}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Promo Rate:</span>
+                    <span className="font-bold text-gray-900">MZN {offer.specialPrice?.toLocaleString()} / night</span>
+                  </div>
+                  <div className="flex justify-between text-[11px] text-gray-500">
+                    <span>Review Due:</span>
+                    <span>{projection.reviewDueDate}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="pt-2 border-t border-gray-100 flex items-center justify-between gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleOpenSeasonalReview(listing, offer, projection)}
+                  className="px-3.5 py-1.5 bg-[#009A60] hover:bg-[#008250] text-white text-xs font-bold rounded-xl transition-colors cursor-pointer flex items-center gap-1.5"
+                >
+                  <CheckCircle2 size={13} />
+                  <span>Review & Confirm</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleDeclineSeasonalReview(listing, offer, projection.upcomingYear)}
+                  className="px-3 py-1.5 text-xs font-semibold text-gray-500 hover:text-rose-600 rounded-lg hover:bg-rose-50 transition-colors cursor-pointer"
+                >
+                  Decline
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="min-h-screen bg-gray-50 pb-36 pt-6 px-4 md:px-8">
       <div className="max-w-7xl mx-auto space-y-6">
@@ -623,8 +874,13 @@ export default function PartnerDashboard() {
                 <span>Partner Business Dashboard</span>
               </span>
               
-              {/* Real Verification Badge */}
-              {verification?.status === 'verified' ? (
+              {/* Real Verification Badge (FIX #7) */}
+              {effectiveVerificationStatus === 'suspended' ? (
+                <span className="px-3 py-1 rounded-full bg-rose-100 text-rose-800 border border-rose-300 text-xs font-bold flex items-center gap-1">
+                  <AlertCircle size={13} className="text-rose-600" />
+                  <span>Verification Suspended · Document Expired</span>
+                </span>
+              ) : verification?.status === 'verified' ? (
                 <span className="px-3 py-1 rounded-full bg-emerald-100 text-[#008250] text-xs font-bold flex items-center gap-1">
                   <CheckCircle2 size={13} />
                   <span>Verified Partner</span>
@@ -673,6 +929,83 @@ export default function PartnerDashboard() {
             </button>
           </div>
         </div>
+
+        {/* Document Expiry & Suspension Warning Banner (FIX #7) */}
+        {effectiveVerificationStatus === 'suspended' && (
+          <div className="bg-rose-50 border border-rose-300 text-rose-950 p-5 rounded-3xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm">
+            <div className="flex items-start gap-3.5">
+              <div className="w-10 h-10 rounded-2xl bg-rose-200/90 text-rose-700 flex items-center justify-center shrink-0">
+                <AlertCircle size={22} />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-rose-900 tracking-tight flex items-center gap-2">
+                  <span>Mozambique Tourism Compliance: Host Verification Suspended</span>
+                  <span className="px-2 py-0.5 rounded-full bg-rose-200 text-rose-800 text-[10px] uppercase font-black">Suspended</span>
+                </h3>
+                <p className="text-xs text-rose-800/90 mt-1 leading-relaxed max-w-3xl">
+                  Your registered identification ({verification?.docType === 'passport' ? 'Passport' : 'National ID (B.I.)'}) expired on <strong>{verification?.expiryDate}</strong> ({Math.abs(hostDocExpiry.daysUntilExpiry || 0)} days ago). Under Mozambique tourism safety regulations, partner listings cannot accept new bookings and automated disbursements are suspended until unexpired credentials are uploaded and verified.
+                </p>
+              </div>
+            </div>
+            <Link
+              to="/host/verify"
+              className="shrink-0 px-4 py-2.5 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-xl transition-all shadow-xs flex items-center gap-1.5"
+            >
+              <RefreshCw size={13} />
+              <span>Renew Credentials Now</span>
+            </Link>
+          </div>
+        )}
+
+        {/* 90-Day Post-Expiry Grace Period Notice (FIX #7) */}
+        {effectiveVerificationStatus !== 'suspended' && hostDocExpiry.inGracePeriod && (
+          <div className="bg-amber-50 border border-amber-300 text-amber-950 p-4 rounded-3xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm">
+            <div className="flex items-start gap-3">
+              <div className="w-9 h-9 rounded-2xl bg-amber-200 text-amber-800 flex items-center justify-center shrink-0">
+                <AlertTriangle size={20} />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-amber-900 tracking-tight">
+                  90-Day Grace Period Active ({hostDocExpiry.gracePeriodDaysRemaining} days remaining)
+                </h3>
+                <p className="text-xs text-amber-800/90 mt-0.5 leading-relaxed">
+                  Your registered {verification?.docType === 'passport' ? 'passport' : 'B.I.'} expired on <strong>{verification?.expiryDate}</strong>. Stays and tours remain bookable during this 90-day grace period until <strong>{hostDocExpiry.suspensionEffectiveDate || 'grace period end'}</strong>. Please upload your renewed credentials before automatic suspension.
+                </p>
+              </div>
+            </div>
+            <Link
+              to="/host/verify"
+              className="shrink-0 px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold rounded-xl transition-all shadow-xs flex items-center gap-1.5"
+            >
+              <span>Submit Renewal</span>
+            </Link>
+          </div>
+        )}
+
+        {/* Document Expiring Soon Notice (FIX #7) */}
+        {effectiveVerificationStatus !== 'suspended' && !hostDocExpiry.inGracePeriod && hostDocExpiry.expiryStatus === 'expiring_soon' && (
+          <div className="bg-amber-50 border border-amber-300 text-amber-950 p-4 rounded-3xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm">
+            <div className="flex items-start gap-3">
+              <div className="w-9 h-9 rounded-2xl bg-amber-200 text-amber-800 flex items-center justify-center shrink-0">
+                <Clock size={20} />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-amber-900 tracking-tight">
+                  Document Expiring Soon ({hostDocExpiry.daysUntilExpiry} days remaining)
+                </h3>
+                <p className="text-xs text-amber-800/90 mt-0.5 leading-relaxed">
+                  Your registered {verification?.docType === 'passport' ? 'passport' : 'B.I.'} expires on <strong>{verification?.expiryDate}</strong>. Please renew with the issuing authority and upload your updated document before expiration to avoid partner suspension.
+                </p>
+              </div>
+            </div>
+            <Link
+              to="/host/verify"
+              className="shrink-0 px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold rounded-xl transition-all shadow-xs flex items-center gap-1.5"
+            >
+              <span>Renew Early</span>
+            </Link>
+          </div>
+        )}
 
         {/* Global Action Banner */}
         {actionSuccessMsg && (
@@ -876,6 +1209,7 @@ export default function PartnerDashboard() {
         {/* ============================================================== */}
         {activeTab === 'overview' && (
           <div className="space-y-6">
+            {renderSeasonalReviewsBanner()}
             
             {/* Published Offerings Summary */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -1124,6 +1458,7 @@ export default function PartnerDashboard() {
         {/* ============================================================== */}
         {activeTab === 'accommodations' && (
           <div className="space-y-4">
+            {renderSeasonalReviewsBanner()}
             <div className="flex items-center justify-between">
               <div>
                 <h2 className="text-xl font-bold text-gray-900">Your Property Portfolio</h2>
@@ -2309,7 +2644,17 @@ export default function PartnerDashboard() {
                   </h3>
 
                   <div className="mt-3">
-                    {verification?.status === 'verified' ? (
+                    {effectiveVerificationStatus === 'suspended' ? (
+                      <div className="space-y-2">
+                        <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-rose-100 text-rose-800 text-xs font-bold border border-rose-300">
+                          <AlertCircle size={14} className="text-rose-600" />
+                          <span>Verification Suspended (Expired Document)</span>
+                        </div>
+                        <p className="text-xs text-rose-800 leading-relaxed">
+                          Your registered credentials expired on {verification?.expiryDate}. Under Mozambique tourism regulations, partner verified status and listing privileges are suspended until renewed documents are verified.
+                        </p>
+                      </div>
+                    ) : verification?.status === 'verified' ? (
                       <div className="space-y-2">
                         <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-100 text-[#008250] text-xs font-bold">
                           <CheckCircle2 size={14} />
@@ -2349,7 +2694,7 @@ export default function PartnerDashboard() {
                     className="inline-flex items-center gap-1.5 px-4 py-2 bg-gray-900 hover:bg-black text-white text-xs font-bold rounded-xl transition-colors"
                   >
                     <FileText size={13} />
-                    <span>{verification ? 'Manage Verification Documents' : 'Submit Verification Documents'}</span>
+                    <span>{effectiveVerificationStatus === 'suspended' ? 'Upload Renewed Document' : verification ? 'Manage Verification Documents' : 'Submit Verification Documents'}</span>
                   </Link>
                 </div>
               </div>
@@ -2808,6 +3153,180 @@ export default function PartnerDashboard() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* SEASONAL OFFERS ANNUAL REVIEW MODAL (FIX #6) */}
+      {seasonalReviewModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+          <div className="bg-white rounded-3xl max-w-xl w-full p-6 sm:p-7 shadow-2xl border border-gray-200 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between pb-4 border-b border-gray-100">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-emerald-100 text-[#008250] flex items-center justify-center">
+                  <CalendarCheck size={18} />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-gray-900">Annual Seasonal Offer Review</h3>
+                  <p className="text-xs text-gray-500">Confirm or adjust dates and rates for upcoming season</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSeasonalReviewModal(null)}
+                className="text-gray-400 hover:text-gray-600 p-1 rounded-full hover:bg-gray-100 cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            {seasonalReviewSuccess ? (
+              <div className="my-6 p-5 bg-emerald-50 border border-emerald-300 rounded-2xl text-center space-y-2">
+                <CheckCircle2 size={32} className="mx-auto text-emerald-600" />
+                <h4 className="font-bold text-gray-900 text-sm">{seasonalReviewSuccess}</h4>
+                <p className="text-xs text-gray-600">Your seasonal promotion is now confirmed and scheduled.</p>
+              </div>
+            ) : (
+              <form onSubmit={handleConfirmSeasonalReview} className="mt-5 space-y-5">
+                {/* Offering & Previous Saved Configuration */}
+                <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Property</span>
+                    <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-amber-100 text-amber-800 uppercase">
+                      {seasonalReviewModal.projection.seasonName} {seasonalReviewModal.projection.upcomingYear}
+                    </span>
+                  </div>
+                  <h4 className="font-bold text-sm text-gray-900">{seasonalReviewModal.listing.title}</h4>
+                  
+                  <div className="pt-2 border-t border-gray-200 grid grid-cols-2 gap-3 text-xs">
+                    <div>
+                      <span className="text-gray-500 block">Offer Name:</span>
+                      <span className="font-semibold text-gray-900">
+                        {seasonalReviewModal.offer.offerName || 'Special Promotional Offer'}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-gray-500 block">Pricing Method:</span>
+                      <span className="font-semibold text-gray-900 capitalize">
+                        {seasonalReviewModal.offer.offerType} Discount
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-gray-500 block">Base Price:</span>
+                      <span className="font-semibold text-gray-900">
+                        MZN {seasonalReviewModal.offer.originalPrice?.toLocaleString()} / night
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-gray-500 block">Previous Dates:</span>
+                      <span className="font-medium text-gray-700">
+                        {seasonalReviewModal.offer.startDate} to {seasonalReviewModal.offer.endDate}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Important Review Policy Notice */}
+                <div className="p-4 bg-emerald-50/70 border border-emerald-200/80 rounded-2xl text-xs space-y-1.5 text-emerald-950">
+                  <span className="font-bold block flex items-center gap-1.5 text-[#008250]">
+                    <Sparkles size={14} />
+                    <span>Annual Review Confirmation Policy</span>
+                  </span>
+                  <p className="text-[11px] text-emerald-800 leading-relaxed">
+                    Seasonal promotions do not auto-publish without owner approval. Review the projected upcoming dates and nightly rate below. You can adjust the dates or price before confirming.
+                  </p>
+                </div>
+
+                {/* Editable Dates for Upcoming Season */}
+                <div className="space-y-3">
+                  <label className="block text-xs font-bold text-gray-800 uppercase tracking-wider">
+                    Upcoming Season Dates ({seasonalReviewModal.projection.upcomingYear}) *
+                  </label>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <span className="block text-xs text-gray-500 mb-1">Start Date</span>
+                      <input
+                        type="date"
+                        required
+                        value={editSeasonalStartDate}
+                        onChange={(e) => setEditSeasonalStartDate(e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-xl text-xs font-medium focus:ring-2 focus:ring-[#009A60] focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <span className="block text-xs text-gray-500 mb-1">End Date</span>
+                      <input
+                        type="date"
+                        required
+                        value={editSeasonalEndDate}
+                        onChange={(e) => setEditSeasonalEndDate(e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-xl text-xs font-medium focus:ring-2 focus:ring-[#009A60] focus:outline-none"
+                      />
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-gray-500">
+                    Calculated for upcoming {seasonalReviewModal.projection.seasonName}. Moving occasions (e.g. Easter) are projected dynamically.
+                  </p>
+                </div>
+
+                {/* Editable Nightly Special Price */}
+                <div>
+                  <label className="block text-xs font-bold text-gray-800 uppercase tracking-wider mb-1.5">
+                    Confirmed Promotional Rate (MZN / Night) *
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    required
+                    value={editSeasonalPrice}
+                    onChange={(e) => setEditSeasonalPrice(Number(e.target.value))}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-xl text-sm font-semibold focus:ring-2 focus:ring-[#009A60] focus:outline-none"
+                  />
+                  <span className="text-[11px] text-gray-500 mt-1 block">
+                    Original listing price is MZN {seasonalReviewModal.offer.originalPrice?.toLocaleString()}.
+                  </span>
+                </div>
+
+                {/* Modal Actions */}
+                <div className="pt-4 border-t border-gray-100 flex items-center justify-between gap-2 flex-wrap">
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleDeclineSeasonalReview(seasonalReviewModal.listing, seasonalReviewModal.offer, seasonalReviewModal.projection.upcomingYear)}
+                      className="px-3.5 py-2 text-xs font-bold text-rose-600 hover:text-rose-700 hover:bg-rose-50 rounded-xl transition-colors cursor-pointer"
+                    >
+                      Decline for {seasonalReviewModal.projection.upcomingYear}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleSendSeasonalReminder(seasonalReviewModal.listing, seasonalReviewModal.offer, seasonalReviewModal.projection)}
+                      className="px-3 py-2 text-xs font-semibold text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-xl transition-colors cursor-pointer flex items-center gap-1"
+                    >
+                      <Mail size={12} />
+                      <span>Dispatch Alert</span>
+                    </button>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setSeasonalReviewModal(null)}
+                      className="px-4 py-2 border border-gray-200 text-gray-600 rounded-xl text-xs font-semibold hover:bg-gray-50 cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={confirmingSeasonal}
+                      className="px-5 py-2 bg-[#009A60] hover:bg-[#008250] text-white text-xs font-bold rounded-xl shadow-xs transition-colors cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+                    >
+                      <CheckCircle2 size={14} />
+                      <span>{confirmingSeasonal ? 'Confirming...' : `Confirm & Activate for ${seasonalReviewModal.projection.upcomingYear}`}</span>
+                    </button>
+                  </div>
+                </div>
+              </form>
+            )}
           </div>
         </div>
       )}

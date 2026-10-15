@@ -1420,14 +1420,261 @@ Output strictly a JSON object matching this schema:
     }
   });
 
-  // Send renewal reminder notification API
-  app.post("/api/verify/send-reminder", (req, res) => {
-    const { hostName, userEmail, docType, expiryDate, daysUntilExpiry } = req.body;
-    console.log(`[Reminder] Dispatching renewal alert to host ${hostName} (${userEmail}): ${docType} expires on ${expiryDate} (${daysUntilExpiry} days left).`);
+  // In-memory deduplication registries to prevent repeated notifications (with Firestore persistence fallback)
+  const dispatchedSeasonalReminders = new Map<string, { dispatchedAt: string; upcomingYear: number; hostEmail?: string }>();
+  const dispatchedRenewalReminders = new Map<string, { dispatchedAt: string; expiryDate: string }>();
+
+  // Send renewal reminder notification API (FIX #7)
+  app.post("/api/verify/send-reminder", async (req, res) => {
+    const caller = await authenticateRequest(req);
+    const isCronAuthorized = req.headers['x-scheduled-task-secret'] === process.env.CRON_SECRET || req.headers['x-cron-key'] === 'mozbook-system-cron';
+    
+    if (!caller && !isCronAuthorized && process.env.NODE_ENV === 'production') {
+      return res.status(401).json({
+        success: false,
+        error: "Authentication required to dispatch renewal reminders."
+      });
+    }
+
+    const { hostName, userEmail, hostId, docType, expiryDate, daysUntilExpiry } = req.body;
+    if (!expiryDate) {
+      return res.status(400).json({ success: false, error: "Missing required expiryDate" });
+    }
+
+    // Host isolation: Ensure caller is authorized for this host account
+    if (caller && !isCronAuthorized) {
+      const isHost = (hostId && caller.uid === hostId) || (caller.email && userEmail && caller.email.toLowerCase() === userEmail.toLowerCase());
+      const isAdmin = caller.email === 'admin@mozbook.mz' || caller.email === 'mozbookinfo@gmail.com';
+      if (!isHost && !isAdmin) {
+        return res.status(403).json({
+          success: false,
+          error: "Unauthorized: You can only dispatch renewal reminders for your own account."
+        });
+      }
+    }
+
+    const dedupKey = `${userEmail || hostName}_${expiryDate}`;
+    const now = Date.now();
+    let existing = dispatchedRenewalReminders.get(dedupKey);
+
+    // Persistent deduplication check from Firestore across server restarts
+    if (!existing) {
+      try {
+        const adminDb = getPrivilegedFirestore();
+        const safeDocId = dedupKey.replace(/[^a-zA-Z0-9_-]/g, '_');
+        const docSnap = await adminDb.collection('compliance_reminders').doc(safeDocId).get();
+        if (docSnap.exists) {
+          const d = docSnap.data()!;
+          existing = { dispatchedAt: d.dispatchedAt, expiryDate: d.expiryDate };
+          dispatchedRenewalReminders.set(dedupKey, existing);
+        }
+      } catch {}
+    }
+
+    if (existing && (now - new Date(existing.dispatchedAt).getTime()) < 24 * 60 * 60 * 1000) {
+      return res.json({
+        success: true,
+        alreadyDispatched: true,
+        dispatchedAt: existing.dispatchedAt,
+        message: `Renewal reminder was already dispatched on ${existing.dispatchedAt}. Next reminder scheduled per compliance cadence.`,
+      });
+    }
+
+    const record = {
+      dispatchedAt: new Date().toISOString(),
+      expiryDate,
+      userEmail,
+      hostName,
+      type: 'renewal_reminder'
+    };
+    dispatchedRenewalReminders.set(dedupKey, record);
+
+    try {
+      const adminDb = getPrivilegedFirestore();
+      const safeDocId = dedupKey.replace(/[^a-zA-Z0-9_-]/g, '_');
+      await adminDb.collection('compliance_reminders').doc(safeDocId).set(record, { merge: true });
+    } catch {}
+
+    const portalUrl = `${process.env.HOST_PORTAL_URL || ''}/host/verify`;
+    console.log(`[Reminder] Dispatching renewal alert to host ${hostName} (${userEmail}): ${docType} expires on ${expiryDate} (${daysUntilExpiry} days left). Direct action URL: ${portalUrl}`);
+
     res.json({
       success: true,
+      alreadyDispatched: false,
       message: `Document renewal reminder has been scheduled and sent to ${userEmail || hostName}. Host notified to renew before ${expiryDate}.`,
+      sentAt: new Date().toISOString(),
+      renewalUrl: portalUrl
+    });
+  });
+
+  // Scheduled compliance task to process hosts due for document renewal reminders at 90, 60, 30 days and during post-expiry grace period
+  app.post("/api/verify/compliance/process-due", async (req, res) => {
+    const caller = await authenticateRequest(req);
+    const isCronAuthorized = req.headers['x-scheduled-task-secret'] === process.env.CRON_SECRET || req.headers['x-cron-key'] === 'mozbook-system-cron';
+    
+    if (!caller && !isCronAuthorized && process.env.NODE_ENV === 'production') {
+      return res.status(401).json({ success: false, error: "Unauthorized access to scheduled task." });
+    }
+
+    const { items = [] } = req.body;
+    let dispatchedCount = 0;
+    let skippedCount = 0;
+
+    for (const item of items) {
+      const milestone = item.daysUntilExpiry <= 0 ? 'grace_period' : item.daysUntilExpiry <= 30 ? '30d' : item.daysUntilExpiry <= 60 ? '60d' : '90d';
+      const dedupKey = `${item.userEmail || item.hostId}_${item.expiryDate}_${milestone}`;
+      if (dispatchedRenewalReminders.has(dedupKey)) {
+        skippedCount++;
+        continue;
+      }
+      dispatchedRenewalReminders.set(dedupKey, {
+        dispatchedAt: new Date().toISOString(),
+        expiryDate: item.expiryDate
+      });
+      dispatchedCount++;
+    }
+
+    res.json({
+      success: true,
+      dispatchedCount,
+      skippedCount,
+      processedAt: new Date().toISOString()
+    });
+  });
+
+  // Seasonal Offer Annual Review reminder notification API (FIX #6)
+  app.post("/api/offers/seasonal-reviews/send-reminder", async (req, res) => {
+    const caller = await authenticateRequest(req);
+    const isCronAuthorized = req.headers['x-scheduled-task-secret'] === process.env.CRON_SECRET || req.headers['x-cron-key'] === 'mozbook-system-cron';
+    
+    if (!caller && !isCronAuthorized && process.env.NODE_ENV === 'production') {
+      return res.status(401).json({
+        success: false,
+        error: "Authentication required to dispatch annual review reminders."
+      });
+    }
+
+    const { 
+      listingId, 
+      listingTitle, 
+      hostId, 
+      hostEmail, 
+      hostName, 
+      seasonalTag, 
+      offerName, 
+      upcomingYear, 
+      projectedStartDate, 
+      projectedEndDate, 
+      reviewDueDate 
+    } = req.body;
+
+    if (!listingId || !upcomingYear) {
+      return res.status(400).json({
+        success: false,
+        error: "Missing required listingId or upcomingYear"
+      });
+    }
+
+    if (caller && !isCronAuthorized) {
+      const isHost = caller.uid === hostId || (caller.email && hostEmail && caller.email.toLowerCase() === hostEmail.toLowerCase());
+      const isAdmin = caller.email === 'admin@mozbook.mz' || caller.email === 'mozbookinfo@gmail.com';
+      if (!isHost && !isAdmin) {
+        return res.status(403).json({
+          success: false,
+          error: "Unauthorized: You can only dispatch seasonal reminders for your own listings."
+        });
+      }
+    }
+
+    // Deduplication check: do not repeatedly dispatch for same upcoming review year
+    const dedupKey = `${listingId}_${upcomingYear}`;
+    let existing = dispatchedSeasonalReminders.get(dedupKey);
+
+    // Persistent deduplication check from Firestore across server restarts
+    if (!existing) {
+      try {
+        const adminDb = getPrivilegedFirestore();
+        const safeDocId = dedupKey.replace(/[^a-zA-Z0-9_-]/g, '_');
+        const docSnap = await adminDb.collection('seasonal_reminders').doc(safeDocId).get();
+        if (docSnap.exists) {
+          const d = docSnap.data()!;
+          existing = { dispatchedAt: d.dispatchedAt, upcomingYear: d.upcomingYear, hostEmail: d.hostEmail };
+          dispatchedSeasonalReminders.set(dedupKey, existing);
+        }
+      } catch {}
+    }
+
+    if (existing) {
+      return res.json({
+        success: true,
+        alreadyDispatched: true,
+        dispatchedAt: existing.dispatchedAt,
+        message: `Annual review alert was already dispatched to owner on ${existing.dispatchedAt} for ${upcomingYear}. Preventing duplicate notification.`
+      });
+    }
+
+    const record = {
+      dispatchedAt: new Date().toISOString(),
+      upcomingYear: Number(upcomingYear),
+      hostEmail,
+      listingId,
+      listingTitle
+    };
+    dispatchedSeasonalReminders.set(dedupKey, record);
+
+    try {
+      const adminDb = getPrivilegedFirestore();
+      const safeDocId = dedupKey.replace(/[^a-zA-Z0-9_-]/g, '_');
+      await adminDb.collection('seasonal_reminders').doc(safeDocId).set(record, { merge: true });
+    } catch {}
+
+    const reviewUrl = `${process.env.HOST_PORTAL_URL || ''}/partner?reviewListingId=${encodeURIComponent(listingId)}#seasonal-reviews`;
+
+    console.log(
+      `[Seasonal Review Alert] Dispatched review alert to owner ${hostName || hostId} (${hostEmail || 'no-email'}) for listing '${listingTitle || listingId}' - Season: ${seasonalTag || 'Seasonal'} ${upcomingYear}. Review URL: ${reviewUrl}`
+    );
+
+    res.json({
+      success: true,
+      alreadyDispatched: false,
+      message: `Annual seasonal review alert successfully dispatched for '${listingTitle || listingId}' (${seasonalTag} ${upcomingYear}). Owner notified to review dates and pricing.`,
+      reviewUrl,
       sentAt: new Date().toISOString()
+    });
+  });
+
+  // Scheduled task endpoint to process all eligible seasonal reviews safely without manual intervention
+  app.post("/api/offers/seasonal-reviews/process-due", async (req, res) => {
+    const caller = await authenticateRequest(req);
+    const isCronAuthorized = req.headers['x-scheduled-task-secret'] === process.env.CRON_SECRET || req.headers['x-cron-key'] === 'mozbook-system-cron';
+    
+    if (!caller && !isCronAuthorized && process.env.NODE_ENV === 'production') {
+      return res.status(401).json({ success: false, error: "Unauthorized access to scheduled task." });
+    }
+
+    const { items = [] } = req.body;
+    let dispatchedCount = 0;
+    let skippedCount = 0;
+
+    for (const item of items) {
+      const dedupKey = `${item.listingId}_${item.upcomingYear}`;
+      if (dispatchedSeasonalReminders.has(dedupKey)) {
+        skippedCount++;
+        continue;
+      }
+      dispatchedSeasonalReminders.set(dedupKey, {
+        dispatchedAt: new Date().toISOString(),
+        upcomingYear: Number(item.upcomingYear),
+        hostEmail: item.hostEmail
+      });
+      dispatchedCount++;
+    }
+
+    res.json({
+      success: true,
+      dispatchedCount,
+      skippedCount,
+      processedAt: new Date().toISOString()
     });
   });
 

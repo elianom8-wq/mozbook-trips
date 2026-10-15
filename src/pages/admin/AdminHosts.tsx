@@ -135,12 +135,14 @@ export default function AdminHosts() {
     let verified = 0;
     let pending = 0;
     let rejected = 0;
+    let suspended = 0;
     let expiring = 0;
 
     hosts.forEach((h) => {
       if (h.verificationStatus === 'verified') verified++;
       else if (h.verificationStatus === 'pending') pending++;
       else if (h.verificationStatus === 'rejected') rejected++;
+      else if (h.verificationStatus === 'suspended' || h.accountStatus === 'suspended') suspended++;
 
       if (
         h.expiryStatus === 'expiring_soon' ||
@@ -156,6 +158,7 @@ export default function AdminHosts() {
       verified,
       pending,
       rejected,
+      suspended,
       expiring,
     };
   }, [hosts]);
@@ -167,6 +170,7 @@ export default function AdminHosts() {
       if (statusFilter === 'verified' && h.verificationStatus !== 'verified') return false;
       if (statusFilter === 'pending' && h.verificationStatus !== 'pending') return false;
       if (statusFilter === 'rejected' && h.verificationStatus !== 'rejected') return false;
+      if (statusFilter === 'suspended' && h.verificationStatus !== 'suspended' && h.accountStatus !== 'suspended') return false;
       if (statusFilter === 'expiring') {
         const isExp =
           h.expiryStatus === 'expiring_soon' ||
@@ -342,6 +346,7 @@ export default function AdminHosts() {
                 { id: 'verified', label: 'Verified', count: summary.verified },
                 { id: 'pending', label: 'Pending', count: summary.pending },
                 { id: 'rejected', label: 'Rejected', count: summary.rejected },
+                { id: 'suspended', label: 'Suspended', count: summary.suspended },
                 { id: 'expiring', label: 'Expiring / Expired', count: summary.expiring },
               ].map((tab) => (
                 <button
@@ -509,6 +514,11 @@ export default function AdminHosts() {
                                 <ShieldCheck size={11} />
                                 <span>Verified</span>
                               </span>
+                            ) : h.verificationStatus === 'suspended' ? (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md bg-amber-500/10 border border-amber-500/30 text-amber-400 font-mono text-[11px] font-bold">
+                                <AlertTriangle size={11} />
+                                <span>Suspended</span>
+                              </span>
                             ) : h.verificationStatus === 'pending' ? (
                               <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md bg-amber-500/10 border border-amber-500/30 text-amber-400 font-mono text-[11px] font-bold">
                                 <Clock size={11} />
@@ -525,7 +535,14 @@ export default function AdminHosts() {
                               </span>
                             )}
 
-                            {isExpiringOrExpired && (
+                            {h.inGracePeriod && (
+                              <span className="text-[9px] font-mono text-amber-400 flex items-center gap-0.5">
+                                <Clock size={10} />
+                                <span>Grace Period ({h.gracePeriodDaysRemaining}d left)</span>
+                              </span>
+                            )}
+
+                            {isExpiringOrExpired && !h.inGracePeriod && (
                               <span className="text-[9px] font-mono text-orange-400 flex items-center gap-0.5">
                                 <AlertTriangle size={10} />
                                 <span>{h.expiryStatus === 'expired' || h.isExpired ? 'Doc Expired' : 'Expiring Soon'}</span>

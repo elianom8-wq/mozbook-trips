@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { parseAndValidateTd3Mrz, computeCheckDigit, parseMrzDate } from '../../src/utils/mrzParser';
-import { submitHostVerification, extractDocumentData, HostVerification } from '../../src/services/listingService';
+import { submitHostVerification, extractDocumentData, HostVerification, calculateDocumentExpiry, sendRenewalReminder } from '../../src/services/listingService';
 
 // Mock firestore modules
 vi.mock('../../src/firebase', () => {
@@ -458,6 +458,130 @@ describe('Part A & B — Host Verification & Passport Auto-Fill Integrity Suite'
       expect(call1.errorCategory).toBe('PROVIDER_CREDITS_DEPLETED');
       expect(call2.attemptedApiCall).toBe(false);
       expect(apiCallCount).toBe(0); // Zero repeated API calls made
+    });
+  });
+
+  describe('Part D: Host Document Expiry, Reminder Safeguards & Verification Suspension Suite (FIX #7)', () => {
+    const originalFetch = global.fetch;
+
+    afterEach(() => {
+      global.fetch = originalFetch;
+      vi.restoreAllMocks();
+    });
+
+    it('19. calculateDocumentExpiry correctly identifies expired documents against Mozambique CAT (UTC+2) time and marks isExpired, expired status, and isSuspended', () => {
+      // Reference date: 2026-10-14 in Mozambique CAT
+      const refDate = new Date('2026-10-14T08:00:00Z');
+      
+      // Document expired in 2025
+      const calc = calculateDocumentExpiry('2025-06-30', refDate);
+      expect(calc.isExpired).toBe(true);
+      expect(calc.expiryStatus).toBe('expired');
+      expect(calc.isSuspended).toBe(true);
+      expect(calc.daysUntilExpiry).toBeLessThan(0);
+      // Confirms effective verification status becomes 'suspended' for previously verified host
+      expect(calc.effectiveVerificationStatus('verified')).toBe('suspended');
+    });
+
+    it('20. calculateDocumentExpiry evaluates documents expiring within 180 days as expiring_soon without prematurely suspending', () => {
+      const refDate = new Date('2026-10-14T08:00:00Z');
+      
+      // Document expiring on 2026-12-31 (~78 days remaining)
+      const calc = calculateDocumentExpiry('2026-12-31', refDate);
+      expect(calc.isExpired).toBe(false);
+      expect(calc.expiryStatus).toBe('expiring_soon');
+      expect(calc.isSuspended).toBe(false);
+      expect(calc.daysUntilExpiry).toBeGreaterThan(0);
+      expect(calc.daysUntilExpiry).toBeLessThanOrEqual(180);
+      expect(calc.effectiveVerificationStatus('verified')).toBe('verified');
+    });
+
+    it('21. calculateDocumentExpiry evaluates unexpired documents beyond 180 days as valid', () => {
+      const refDate = new Date('2026-10-14T08:00:00Z');
+      
+      // Document expiring in 2029
+      const calc = calculateDocumentExpiry('2029-05-20', refDate);
+      expect(calc.isExpired).toBe(false);
+      expect(calc.expiryStatus).toBe('valid');
+      expect(calc.isSuspended).toBe(false);
+      expect(calc.daysUntilExpiry).toBeGreaterThan(180);
+      expect(calc.effectiveVerificationStatus('verified')).toBe('verified');
+    });
+
+    it('22. Empty or invalid date strings return uncalculated state without throwing or corrupting host status', () => {
+      const emptyCalc = calculateDocumentExpiry('');
+      expect(emptyCalc.isExpired).toBe(false);
+      expect(emptyCalc.expiryStatus).toBeUndefined();
+      expect(emptyCalc.isSuspended).toBe(false);
+      expect(emptyCalc.effectiveVerificationStatus('verified')).toBe('verified');
+
+      const nullCalc = calculateDocumentExpiry(null);
+      expect(nullCalc.isExpired).toBe(false);
+      expect(nullCalc.effectiveVerificationStatus('pending')).toBe('pending');
+
+      const invalidCalc = calculateDocumentExpiry('invalid-date-string');
+      expect(invalidCalc.isExpired).toBe(false);
+      expect(invalidCalc.daysUntilExpiry).toBeUndefined();
+    });
+
+    it('23. sendRenewalReminder dispatches authenticated renewal alerts to /api/verify/send-reminder with exact document expiry details', async () => {
+      const mockSuccess = {
+        success: true,
+        alreadyDispatched: false,
+        message: 'Document renewal reminder has been scheduled and sent to host@mozbook.mz. Host notified to renew before 2026-12-31.',
+        sentAt: '2026-10-14T10:00:00Z',
+        renewalUrl: 'https://mozbook.mz/host/verify'
+      };
+
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => mockSuccess
+      });
+
+      const payload = {
+        hostName: 'Alberto Sitoe',
+        userEmail: 'host@mozbook.mz',
+        docType: 'national_id' as const,
+        expiryDate: '2026-12-31',
+        daysUntilExpiry: 78
+      };
+
+      const result = await sendRenewalReminder(payload);
+
+      expect(global.fetch).toHaveBeenCalledTimes(1);
+      expect(global.fetch).toHaveBeenCalledWith('/api/verify/send-reminder', expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify(payload)
+      }));
+
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('Host notified to renew before 2026-12-31');
+    });
+
+    it('24. sendRenewalReminder safely handles duplicate suppression response from deduplication cadence', async () => {
+      const mockDedup = {
+        success: true,
+        alreadyDispatched: true,
+        dispatchedAt: '2026-10-14T08:00:00Z',
+        message: 'Renewal reminder was already dispatched on 2026-10-14T08:00:00Z. Next reminder scheduled per compliance cadence.'
+      };
+
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => mockDedup
+      });
+
+      const result = await sendRenewalReminder({
+        hostName: 'Alberto Sitoe',
+        userEmail: 'host@mozbook.mz',
+        docType: 'national_id' as const,
+        expiryDate: '2026-12-31',
+        daysUntilExpiry: 78
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('already dispatched');
     });
   });
 });

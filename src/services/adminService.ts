@@ -12,6 +12,7 @@ import { db, auth } from '../firebase';
 import { AdminAuditLog, AdminStats, AdminUser, UserActivitySummary, AdminHost, AdminProperty, AdminActivityTrip, AdminUnifiedBooking, AdminBookingCategory, AdminFinancialSummary, AdminFinancialTransaction } from '../types/admin';
 import { getActivitiesTrips } from './activityTripService';
 import { calculateCommission } from '../config/platformCommission';
+import { calculateDocumentExpiry } from './listingService';
 
 const STORAGE_AUDIT_LOGS_KEY = 'mozbook_admin_audit_logs_cache';
 
@@ -434,9 +435,13 @@ export const adminService = {
 
         // Attach verification details
         host.verificationId = docSnap.id;
-        host.verificationStatus = v.status || 'pending';
-        host.expiryStatus = v.expiryStatus || (v.isExpired ? 'expired' : undefined);
-        host.isExpired = v.isExpired;
+        const expiryCalc = calculateDocumentExpiry(v.expiryDate);
+        host.isExpired = expiryCalc.isExpired;
+        host.expiryStatus = expiryCalc.expiryStatus;
+        host.inGracePeriod = expiryCalc.inGracePeriod;
+        host.gracePeriodDaysRemaining = expiryCalc.gracePeriodDaysRemaining;
+        host.suspensionEffectiveDate = expiryCalc.suspensionEffectiveDate;
+        host.isSuspended = expiryCalc.isSuspended;
         host.expiryDate = v.expiryDate;
         host.docType = v.docType;
         host.docNumber = v.docNumber;
@@ -444,6 +449,19 @@ export const adminService = {
         host.reviewedAt = v.reviewedAt;
         host.reviewedBy = v.reviewedBy;
         host.adminNotes = v.adminNotes;
+
+        // Preserve manual safety/misconduct suspension, else enforce automatic suspension after grace period
+        if (host.accountStatus === 'suspended') {
+          host.verificationStatus = 'suspended';
+          host.suspensionReason = host.suspensionReason || 'safety';
+        } else if (v.status === 'suspended') {
+          host.verificationStatus = 'suspended';
+        } else if (expiryCalc.isSuspended && v.status === 'verified') {
+          host.verificationStatus = 'suspended';
+          host.suspensionReason = 'document_expired';
+        } else {
+          host.verificationStatus = v.status || 'pending';
+        }
         if (!host.name || host.name === 'Unnamed Host') {
           host.name = v.hostName || host.name;
         }

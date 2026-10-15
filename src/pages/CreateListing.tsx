@@ -450,6 +450,11 @@ export default function CreateListing() {
       return;
     }
 
+    if (specialOffer?.enabled && specialOffer.isSeasonal && specialOffer.seasonalTag === 'Other' && !specialOffer.customSeasonName?.trim()) {
+      setSubmitError('Please provide a custom seasonal name for your special offer.');
+      return;
+    }
+
     setIsSubmitting(true);
     setSubmitError(null);
 

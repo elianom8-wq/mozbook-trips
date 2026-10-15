@@ -32,7 +32,8 @@ import {
   HostVerification,
   extractDocumentData,
   ExtractedDocData,
-  ExpiryStatus
+  ExpiryStatus,
+  calculateDocumentExpiry
 } from '../services/listingService';
 import DocumentSlotUpload from '../components/DocumentSlotUpload';
 import DocumentExpiryTracker from '../components/DocumentExpiryTracker';
@@ -156,24 +157,10 @@ export default function HostVerificationPage() {
       return;
     }
 
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const parsed = new Date(newDate);
-    if (!isNaN(parsed.getTime())) {
-      const diffMs = parsed.getTime() - today.getTime();
-      const days = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
-      setDaysUntilExpiry(days);
-      if (days < 0) {
-        setIsExpired(true);
-        setExpiryStatus('expired');
-      } else if (days <= 180) {
-        setIsExpired(false);
-        setExpiryStatus('expiring_soon');
-      } else {
-        setIsExpired(false);
-        setExpiryStatus('valid');
-      }
-    }
+    const calc = calculateDocumentExpiry(newDate);
+    setIsExpired(calc.isExpired);
+    setDaysUntilExpiry(calc.daysUntilExpiry);
+    setExpiryStatus(calc.expiryStatus);
   };
 
   // Requirement 3: Switching between B.I. and passport must not carry over data from another document
@@ -363,10 +350,7 @@ export default function HostVerificationPage() {
     }
 
     if (isExpired) {
-      const confirmSubmit = window.confirm(
-        'Warning: Your document appears to be expired. Our operations team cannot approve host listings with expired credentials. Do you still wish to submit for review?'
-      );
-      if (!confirmSubmit) return;
+      console.warn('Submitting host verification with expired document. Host listing approvals will remain suspended until unexpired document is approved.');
     }
 
     setSubmitting(true);
@@ -796,23 +780,30 @@ export default function HostVerificationPage() {
             </div>
 
             {/* Document Expiry Tracker Card */}
-            {expiryDate && (
-              <DocumentExpiryTracker
-                expiryDate={expiryDate}
-                issueDate={issueDate}
-                daysUntilExpiry={daysUntilExpiry}
-                expiryStatus={expiryStatus}
-                isExpired={isExpired}
-                hostName={hostName || 'Host'}
-                userEmail={user?.email || 'host@mozbook.mz'}
-                docType={docType}
-                docNumber={docNumber}
-                nationality={nationality}
-                securityFeatures={securityFeatures}
-                validationNotes={validationNotes}
-                showReminderAction={true}
-              />
-            )}
+            {expiryDate && (() => {
+              const calc = calculateDocumentExpiry(expiryDate);
+              return (
+                <DocumentExpiryTracker
+                  expiryDate={expiryDate}
+                  issueDate={issueDate}
+                  daysUntilExpiry={calc.daysUntilExpiry}
+                  expiryStatus={calc.expiryStatus}
+                  isExpired={calc.isExpired}
+                  inGracePeriod={calc.inGracePeriod}
+                  gracePeriodDaysRemaining={calc.gracePeriodDaysRemaining}
+                  suspensionEffectiveDate={calc.suspensionEffectiveDate}
+                  isSuspended={calc.isSuspended}
+                  hostName={hostName || 'Host'}
+                  userEmail={user?.email || 'host@mozbook.mz'}
+                  docType={docType}
+                  docNumber={docNumber}
+                  nationality={nationality}
+                  securityFeatures={securityFeatures}
+                  validationNotes={validationNotes}
+                  showReminderAction={true}
+                />
+              );
+            })()}
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>

@@ -88,6 +88,7 @@ export type ResidenceType =
 
 export type OfferType = 'percentage' | 'fixed' | 'seasonal';
 export type OfferStatus = 'scheduled' | 'active' | 'expired';
+export type RecurrenceStatus = 'none' | 'pending_review' | 'confirmed' | 'declined';
 
 export interface SpecialOffer {
   id?: string;
@@ -107,6 +108,12 @@ export interface SpecialOffer {
   customSeasonName?: string;
   createdAt?: any;
   updatedAt?: any;
+  annualRecurrenceEnabled?: boolean;
+  recurrenceStatus?: RecurrenceStatus;
+  targetYear?: number;
+  lastReviewPromptDate?: string;
+  lastConfirmedAt?: string;
+  declinedYears?: number[];
 }
 
 export function getOfferStatus(startDate?: string, endDate?: string): OfferStatus {
@@ -311,13 +318,44 @@ export const getListingById = async (id: string) => {
   }
 };
 
+/**
+ * Recursively sanitizes a Firestore payload by omitting fields whose values are undefined.
+ * Preserves null, 0, false, empty strings, arrays, Dates, and Firestore FieldValues (such as serverTimestamp()).
+ */
+export function sanitizeFirestorePayload<T>(value: T): T {
+  if (value === undefined) {
+    return undefined as unknown as T;
+  }
+  if (value === null || typeof value !== 'object') {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value
+      .filter((item) => item !== undefined)
+      .map((item) => sanitizeFirestorePayload(item)) as unknown as T;
+  }
+  // Check if it's a plain object (vs. Date, Timestamp, FieldValue, etc.)
+  const proto = Object.getPrototypeOf(value);
+  if (proto !== Object.prototype && proto !== null) {
+    return value;
+  }
+  const result: Record<string, any> = {};
+  for (const [key, val] of Object.entries(value)) {
+    if (val !== undefined) {
+      result[key] = sanitizeFirestorePayload(val);
+    }
+  }
+  return result as T;
+}
+
 export const createListing = async (listing: Omit<Listing, 'id' | 'createdAt'>) => {
   const path = COLLECTION;
   try {
-    const docRef = await addDoc(collection(db, path), {
+    const payload = sanitizeFirestorePayload({
       ...listing,
       createdAt: serverTimestamp(),
     });
+    const docRef = await addDoc(collection(db, path), payload);
     return docRef.id;
   } catch (error) {
     handleFirestoreError(error, OperationType.CREATE, path);
@@ -328,10 +366,11 @@ export const createListing = async (listing: Omit<Listing, 'id' | 'createdAt'>) 
 export const updateListing = async (id: string, updates: Partial<Listing>) => {
   const path = `${COLLECTION}/${id}`;
   try {
-    await updateDoc(doc(db, COLLECTION, id), {
+    const payload = sanitizeFirestorePayload({
       ...updates,
       updatedAt: serverTimestamp(),
     });
+    await updateDoc(doc(db, COLLECTION, id), payload);
     return true;
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, path);
@@ -346,22 +385,24 @@ export const saveListingSpecialOffer = async (listingId: string, offer: SpecialO
   try {
     // 1. Store promotional information separately in special_offers collection
     const offerDocId = `offer_${listingId}`;
-    await setDoc(doc(db, SPECIAL_OFFERS_COLLECTION, offerDocId), {
+    const sanitizedOfferDoc = sanitizeFirestorePayload({
       ...offer,
       listingId,
       hostId: auth.currentUser?.uid || offer.hostId || 'unknown_host',
       updatedAt: serverTimestamp(),
       createdAt: offer.createdAt || serverTimestamp(),
-    }, { merge: true });
+    });
+    await setDoc(doc(db, SPECIAL_OFFERS_COLLECTION, offerDocId), sanitizedOfferDoc, { merge: true });
 
     // 2. Also keep synced on listing for immediate reactive display
-    await updateDoc(doc(db, COLLECTION, listingId), {
+    const sanitizedListingOffer = sanitizeFirestorePayload({
       specialOffer: {
         ...offer,
         listingId,
       },
       updatedAt: serverTimestamp(),
     });
+    await updateDoc(doc(db, COLLECTION, listingId), sanitizedListingOffer);
     return true;
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
@@ -447,11 +488,12 @@ export const addCommunityPlace = async (place: {
 }) => {
   const path = COMMUNITY_COLLECTION;
   try {
-    const docRef = await addDoc(collection(db, path), {
+    const payload = sanitizeFirestorePayload({
       ...place,
       addedBy: auth.currentUser?.uid || 'guest_host',
       createdAt: serverTimestamp(),
     });
+    const docRef = await addDoc(collection(db, path), payload);
     return docRef.id;
   } catch (error) {
     console.warn('Could not save to community_places in firestore:', error);
@@ -587,8 +629,137 @@ export const getSuggestedNearbyPlaces = async (
 // -------------------------------------------------------------
 
 export type DocType = 'national_id' | 'dire' | 'passport' | 'residence_permit';
-export type VerificationStatus = 'pending' | 'verified' | 'rejected';
+export type VerificationStatus = 'pending' | 'verified' | 'rejected' | 'suspended';
 export type ExpiryStatus = 'valid' | 'expiring_soon' | 'expired';
+
+export const GRACE_PERIOD_DAYS = 90;
+
+export interface DocumentExpiryCalculation {
+  isExpired: boolean;
+  daysUntilExpiry?: number;
+  expiryStatus?: ExpiryStatus;
+  isSuspended: boolean;
+  inGracePeriod?: boolean;
+  gracePeriodDaysRemaining?: number;
+  suspensionEffectiveDate?: string;
+  effectiveVerificationStatus: (
+    currentStatus: VerificationStatus,
+    options?: { manualSuspension?: boolean; hasPendingRenewal?: boolean }
+  ) => VerificationStatus;
+}
+
+/**
+ * Authoritative Mozambique compliance document expiry and suspension calculator.
+ * Evaluates document expiry against Mozambique CAT time (UTC+2).
+ * - Distinguishes document expiry date from the date automatic suspension becomes effective.
+ * - Implements the agreed 90-day post-expiry grace period (GRACE_PERIOD_DAYS = 90).
+ * - During 90-day grace period: isExpired = true, inGracePeriod = true, isSuspended = false.
+ * - Once 90-day grace period elapses (daysUntilExpiry < -90): isSuspended = true.
+ * - Submitting renewal documents pending review does NOT avoid suspension once grace period expires.
+ * - Manual safety or misconduct suspensions can NEVER be overridden or erased.
+ * - 0 <= daysUntilExpiry <= 180: status is 'expiring_soon', isSuspended = false.
+ * - daysUntilExpiry > 180: status is 'valid', isSuspended = false.
+ */
+export function calculateDocumentExpiry(expiryDateStr?: string | null, referenceDate?: Date): DocumentExpiryCalculation {
+  if (!expiryDateStr || !expiryDateStr.trim()) {
+    return {
+      isExpired: false,
+      daysUntilExpiry: undefined,
+      expiryStatus: undefined,
+      isSuspended: false,
+      inGracePeriod: false,
+      effectiveVerificationStatus: (currentStatus, options) => {
+        if (currentStatus === 'suspended' || options?.manualSuspension) return 'suspended';
+        return currentStatus;
+      },
+    };
+  }
+
+  // Mozambique CAT is UTC+2
+  const ref = referenceDate || new Date();
+  const utc = ref.getTime() + (ref.getTimezoneOffset() * 60000);
+  const catToday = new Date(utc + (2 * 3600000));
+  catToday.setHours(0, 0, 0, 0);
+
+  const expDate = new Date(expiryDateStr);
+  if (isNaN(expDate.getTime())) {
+    return {
+      isExpired: false,
+      daysUntilExpiry: undefined,
+      expiryStatus: undefined,
+      isSuspended: false,
+      inGracePeriod: false,
+      effectiveVerificationStatus: (currentStatus, options) => {
+        if (currentStatus === 'suspended' || options?.manualSuspension) return 'suspended';
+        return currentStatus;
+      },
+    };
+  }
+  expDate.setHours(0, 0, 0, 0);
+
+  const diffMs = expDate.getTime() - catToday.getTime();
+  const daysUntilExpiry = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+
+  // Suspension effective date is 90 days after expiry date
+  const suspDate = new Date(expDate.getTime() + (GRACE_PERIOD_DAYS * 24 * 60 * 60 * 1000));
+  const suspensionEffectiveDate = suspDate.toISOString().split('T')[0];
+
+  if (daysUntilExpiry < 0) {
+    const inGracePeriod = daysUntilExpiry >= -GRACE_PERIOD_DAYS;
+    const gracePeriodDaysRemaining = inGracePeriod ? GRACE_PERIOD_DAYS + daysUntilExpiry : 0;
+    const isSuspended = !inGracePeriod;
+
+    return {
+      isExpired: true,
+      daysUntilExpiry,
+      expiryStatus: 'expired',
+      isSuspended,
+      inGracePeriod,
+      gracePeriodDaysRemaining,
+      suspensionEffectiveDate,
+      effectiveVerificationStatus: (currentStatus, options) => {
+        // Manual safety/misconduct suspension is NEVER overridden
+        if (currentStatus === 'suspended' || options?.manualSuspension) {
+          return 'suspended';
+        }
+        // If grace period elapsed, suspension is enforced even if renewal is pending review
+        if (isSuspended) {
+          return 'suspended';
+        }
+        // Within grace period: retains current status (e.g. verified), but host is in grace period
+        return currentStatus;
+      },
+    };
+  } else if (daysUntilExpiry <= 180) {
+    return {
+      isExpired: false,
+      daysUntilExpiry,
+      expiryStatus: 'expiring_soon',
+      isSuspended: false,
+      inGracePeriod: false,
+      gracePeriodDaysRemaining: undefined,
+      suspensionEffectiveDate,
+      effectiveVerificationStatus: (currentStatus, options) => {
+        if (currentStatus === 'suspended' || options?.manualSuspension) return 'suspended';
+        return currentStatus;
+      },
+    };
+  } else {
+    return {
+      isExpired: false,
+      daysUntilExpiry,
+      expiryStatus: 'valid',
+      isSuspended: false,
+      inGracePeriod: false,
+      gracePeriodDaysRemaining: undefined,
+      suspensionEffectiveDate,
+      effectiveVerificationStatus: (currentStatus, options) => {
+        if (currentStatus === 'suspended' || options?.manualSuspension) return 'suspended';
+        return currentStatus;
+      },
+    };
+  }
+}
 
 export interface ExtractedDocData {
   legalName?: string;
@@ -627,6 +798,11 @@ export interface HostVerification {
   isExpired?: boolean;
   daysUntilExpiry?: number;
   expiryStatus?: ExpiryStatus;
+  inGracePeriod?: boolean;
+  gracePeriodDaysRemaining?: number;
+  suspensionEffectiveDate?: string;
+  isSuspended?: boolean;
+  suspensionReason?: 'safety' | 'misconduct' | 'document_expired' | string;
   utilityBillUrl?: string;
   utilityBillAddress?: string;
   status: VerificationStatus;
@@ -690,9 +866,16 @@ export const sendRenewalReminder = async (payload: {
   daysUntilExpiry: number;
 }): Promise<{ success: boolean; message?: string }> => {
   try {
+    const token = auth.currentUser && typeof (auth.currentUser as any).getIdToken === 'function'
+      ? await auth.currentUser.getIdToken().catch(() => null)
+      : null;
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
     const res = await fetch('/api/verify/send-reminder', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify(payload),
     });
     const data = await res.json();
@@ -706,11 +889,12 @@ export const sendRenewalReminder = async (payload: {
 export const submitHostVerification = async (data: Omit<HostVerification, 'id' | 'createdAt' | 'status'>) => {
   const path = VERIFICATIONS_COLLECTION;
   try {
-    const docRef = await addDoc(collection(db, path), {
+    const payload = sanitizeFirestorePayload({
       ...data,
       status: 'pending',
       createdAt: serverTimestamp(),
     });
+    const docRef = await addDoc(collection(db, path), payload);
 
     // Also update user's verification status
     if (auth.currentUser) {

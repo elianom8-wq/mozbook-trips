@@ -34,6 +34,7 @@ const SEASONAL_PRESETS = [
   'Summer',
   'Christmas',
   'Easter',
+  'Easter Holidays',
   'New Year',
   'Holiday Season',
   'Low Season',
@@ -118,6 +119,11 @@ export default function SpecialOffersSection({
     return offer?.customSeasonName || '';
   });
 
+  // 8b. Annual Seasonal Review & Recurrence
+  const [annualRecurrenceEnabled, setAnnualRecurrenceEnabled] = useState<boolean>(() => {
+    return offer?.annualRecurrenceEnabled || false;
+  });
+
   // Sync originalPrice when basePrice changes if not previously detached
   useEffect(() => {
     if (!offer?.originalPrice && basePrice > 0 && originalPrice !== basePrice) {
@@ -164,13 +170,41 @@ export default function SpecialOffersSection({
       specialPrice: calculatedSpecialPrice,
       discountPercent: offerType === 'percentage' ? discountPercent : calculatedDiscountPercent,
       discountAmount: offerType === 'fixed' ? discountAmount : (originalPrice - calculatedSpecialPrice),
-      offerName: offerName.trim() || undefined,
       startDate,
       endDate,
-      isSeasonal,
-      seasonalTag: isSeasonal ? seasonalTag : undefined,
-      customSeasonName: isSeasonal && seasonalTag === 'Other' ? customSeasonName.trim() : undefined,
+      isSeasonal: Boolean(isSeasonal),
     };
+
+    if (offerName && offerName.trim()) {
+      payload.offerName = offerName.trim();
+    }
+    if (isSeasonal && seasonalTag) {
+      payload.seasonalTag = seasonalTag;
+    }
+    if (isSeasonal && seasonalTag === 'Other' && customSeasonName && customSeasonName.trim()) {
+      payload.customSeasonName = customSeasonName.trim();
+    }
+    if (isSeasonal && annualRecurrenceEnabled) {
+      payload.annualRecurrenceEnabled = true;
+      if (offer?.recurrenceStatus) {
+        payload.recurrenceStatus = offer.recurrenceStatus;
+      }
+      if (offer?.targetYear) {
+        payload.targetYear = offer.targetYear;
+      }
+      if (offer?.lastReviewPromptDate) {
+        payload.lastReviewPromptDate = offer.lastReviewPromptDate;
+      }
+      if (offer?.lastConfirmedAt) {
+        payload.lastConfirmedAt = offer.lastConfirmedAt;
+      }
+      if (offer?.declinedYears && offer.declinedYears.length > 0) {
+        payload.declinedYears = offer.declinedYears;
+      }
+    } else {
+      payload.annualRecurrenceEnabled = false;
+      payload.recurrenceStatus = 'none';
+    }
 
     onChange(payload);
   }, [
@@ -186,7 +220,8 @@ export default function SpecialOffersSection({
     endDate,
     isSeasonal,
     seasonalTag,
-    customSeasonName
+    customSeasonName,
+    annualRecurrenceEnabled
   ]);
 
   const handleTurnOffOffer = () => {
@@ -743,6 +778,36 @@ export default function SpecialOffersSection({
                     </div>
                   )}
                 </div>
+
+                {/* Annual Seasonal Review & Recurrence Configuration */}
+                <div className="mt-4 p-3.5 rounded-xl bg-emerald-50/70 border border-emerald-200/80 space-y-2">
+                  <div className="flex items-start gap-2.5">
+                    <input
+                      id="annual-recurrence-checkbox"
+                      type="checkbox"
+                      checked={annualRecurrenceEnabled}
+                      onChange={(e) => setAnnualRecurrenceEnabled(e.target.checked)}
+                      className="mt-0.5 w-4 h-4 text-[#009A60] rounded border-gray-300 focus:ring-[#009A60] cursor-pointer"
+                    />
+                    <div>
+                      <label
+                        htmlFor="annual-recurrence-checkbox"
+                        className="text-xs font-bold text-gray-900 cursor-pointer flex items-center gap-1.5"
+                      >
+                        <CalendarCheck size={14} className="text-[#009A60]" />
+                        <span>Annual Seasonal Review & Recurrence</span>
+                      </label>
+                      <p className="text-[11px] text-gray-600 mt-1 leading-relaxed">
+                        Eligible for annual review: MozBook will alert you prior to this season arriving each year so you can review previous rates, adjust dates, and confirm publication. Offers are never automatically published without your explicit confirmation.
+                      </p>
+                      {!annualRecurrenceEnabled && (
+                        <p className="text-[11px] text-amber-700 mt-1 font-medium">
+                          Annual review disabled. This promotion will only run for the selected dates above and will not be scheduled for future seasonal reviews.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </div>
               </div>
             )}
           </div>
@@ -761,13 +826,19 @@ export default function SpecialOffersSection({
 
             <div className="bg-white/5 border border-white/10 rounded-xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
               <div>
-                <div className="flex items-center gap-2 mb-1.5">
+                <div className="flex items-center gap-2 mb-1.5 flex-wrap">
                   <h4 className="font-extrabold text-base text-white">
                     {offerName.trim() || (isSeasonal ? `${seasonalTag === 'Other' ? (customSeasonName || 'Seasonal') : seasonalTag} Special` : 'Special Promotional Offer')}
                   </h4>
                   {isSeasonal && (
                     <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-amber-400/20 text-amber-300 border border-amber-400/30">
                       {seasonalTag === 'Other' ? (customSeasonName || 'Seasonal') : seasonalTag}
+                    </span>
+                  )}
+                  {isSeasonal && annualRecurrenceEnabled && (
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 flex items-center gap-1">
+                      <Clock size={10} />
+                      <span>Annual Review Eligible</span>
                     </span>
                   )}
                 </div>

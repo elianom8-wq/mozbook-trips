@@ -71,6 +71,70 @@ export interface MemorySlotState {
 export const memoryExperienceSlots = new Map<string, MemorySlotState>();
 export const memoryStaySlots = new Map<string, MemorySlotState>();
 export const memoryBookings = new Map<string, any>();
+export const memorySuspendedHosts = new Set<string>();
+
+/**
+ * Authoritative Host Suspension Guard.
+ * Enforces account suspension across all MozBook booking and reservation operations.
+ * - Suspended hosts (safety, misconduct, or document expiry past 90-day grace period)
+ *   cannot have their listings or experiences booked or reserved.
+ * - Leaves memory and Firestore stores completely pristine without creating holds or bookings.
+ */
+export async function assertHostNotSuspended(
+  hostId: string | undefined,
+  adminDb?: any,
+  transaction?: any
+): Promise<void> {
+  if (!hostId) return;
+
+  // 1. Authoritative in-memory suspension store check
+  if (memorySuspendedHosts.has(hostId)) {
+    throw new InventoryError(403, 'Booking unavailable: Host account is currently suspended for safety or compliance.');
+  }
+
+  // 2. Authoritative Firestore check
+  if (adminDb) {
+    try {
+      const userRef = adminDb.collection('users').doc(hostId);
+      const userSnap = transaction ? await transaction.get(userRef) : await userRef.get();
+      if (userSnap.exists) {
+        const userData = userSnap.data()!;
+        if (userData.accountStatus === 'suspended' || userData.verificationStatus === 'suspended') {
+          throw new InventoryError(403, 'Booking unavailable: Host account is currently suspended for safety or compliance.');
+        }
+      }
+
+      // Check verification documents for this host
+      const verifQuery = adminDb.collection('verifications').where('userId', '==', hostId);
+      const verifsSnap = transaction ? await transaction.get(verifQuery) : await verifQuery.get();
+      if (verifsSnap && !verifsSnap.empty) {
+        verifsSnap.forEach((vDoc: any) => {
+          const v = vDoc.data();
+          if (v.status === 'suspended') {
+            throw new InventoryError(403, 'Booking unavailable: Host account is currently suspended for safety or compliance.');
+          }
+          if (v.expiryDate) {
+            // Check against Mozambique CAT timezone (UTC+2)
+            const catToday = new Date(Date.now() + (2 * 3600000));
+            catToday.setUTCHours(0, 0, 0, 0);
+            const expDate = new Date(v.expiryDate);
+            if (!isNaN(expDate.getTime())) {
+              expDate.setUTCHours(0, 0, 0, 0);
+              const diffDays = Math.ceil((expDate.getTime() - catToday.getTime()) / (1000 * 60 * 60 * 24));
+              // Exceeded 90-day grace period
+              if (diffDays < -90) {
+                throw new InventoryError(403, 'Booking unavailable: Host account is currently suspended due to expired credentials.');
+              }
+            }
+          }
+        });
+      }
+    } catch (err: any) {
+      if (err instanceof InventoryError) throw err;
+      // Continue if non-inventory error
+    }
+  }
+}
 
 /**
  * Server-authoritative in-memory OCC atomic reservation engine for experiences.
@@ -86,6 +150,10 @@ function reserveExperienceInventoryInMemory(
   nowIso: string,
   holdExpiresAtIso: string
 ) {
+  if (params.isHostSuspended || (params.hostId && memorySuspendedHosts.has(params.hostId))) {
+    throw new InventoryError(403, 'Booking unavailable: Host account is currently suspended for safety or compliance.');
+  }
+
   let slot = memoryExperienceSlots.get(slotDocId);
   if (!slot) {
     slot = {
@@ -223,6 +291,7 @@ export interface ReserveExperienceParams {
   idempotencyKey?: string;
   pickupRequested?: boolean;
   pickupNotes?: string;
+  isHostSuspended?: boolean;
 }
 
 export interface ReserveStayParams {
@@ -243,6 +312,7 @@ export interface ReserveStayParams {
   accommodationId?: string;
   travelGroupId?: string;
   idempotencyKey?: string;
+  isHostSuspended?: boolean;
 }
 
 /**
@@ -250,6 +320,11 @@ export interface ReserveStayParams {
  * Prevents concurrent travelers from overselling the final seat.
  */
 export async function reserveExperienceInventory(params: ReserveExperienceParams) {
+  // Enforce host suspension safeguard prior to taking any locks
+  if (params.isHostSuspended || (params.hostId && memorySuspendedHosts.has(params.hostId))) {
+    throw new InventoryError(403, 'Booking unavailable: Host account is currently suspended for safety or compliance.');
+  }
+
   const now = Date.now();
   const nowIso = new Date(now).toISOString();
   const holdExpiresAtIso = new Date(now + HOLD_DURATION_MS).toISOString();
@@ -331,6 +406,9 @@ export async function reserveExperienceInventory(params: ReserveExperienceParams
         throw new InventoryError(404, `Experience '${params.activityId}' not found.`);
       }
       const act = actSnap.data()!;
+
+      const hostId = act.hostId || params.hostId;
+      await assertHostNotSuspended(hostId, adminDb, transaction);
 
       if (act.blockedDates && Array.isArray(act.blockedDates) && act.blockedDates.includes(params.date)) {
         throw new InventoryError(400, `The date ${params.date} has been blocked by the operator and is unavailable.`);
@@ -516,6 +594,10 @@ function reserveStayInventoryInMemory(
   nowIso: string,
   holdExpiresAtIso: string
 ) {
+  if (params.isHostSuspended || (params.hostId && memorySuspendedHosts.has(params.hostId))) {
+    throw new InventoryError(403, 'Booking unavailable: Host account is currently suspended for safety or compliance.');
+  }
+
   const mozbookUnits = 5; // Authoritative default stay unit allocation limit
   let reusableExistingBookingId: string | null = null;
 
@@ -639,6 +721,11 @@ function reserveStayInventoryInMemory(
  * Authoritatively reserves accommodation units across dates with atomic Firestore transaction protection.
  */
 export async function reserveStayInventory(params: ReserveStayParams) {
+  // Enforce host suspension safeguard prior to taking any locks
+  if (params.isHostSuspended || (params.hostId && memorySuspendedHosts.has(params.hostId))) {
+    throw new InventoryError(403, 'Booking unavailable: Host account is currently suspended for safety or compliance.');
+  }
+
   const now = Date.now();
   const nowIso = new Date(now).toISOString();
   const holdExpiresAtIso = new Date(now + HOLD_DURATION_MS).toISOString();
@@ -731,6 +818,9 @@ export async function reserveStayInventory(params: ReserveStayParams) {
       }
 
       const listing = listingSnap.data()!;
+
+      const hostId = listing.hostId || params.hostId;
+      await assertHostNotSuspended(hostId, adminDb, transaction);
 
       // Blocked dates check
       if (listing.blockedDates && Array.isArray(listing.blockedDates)) {

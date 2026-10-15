@@ -58,9 +58,14 @@ export interface AdminHost {
   
   // Verification details
   verificationId?: string;
-  verificationStatus: 'verified' | 'pending' | 'rejected' | 'unverified';
+  verificationStatus: 'verified' | 'pending' | 'rejected' | 'suspended' | 'unverified';
   expiryStatus?: 'valid' | 'expiring_soon' | 'expired';
   isExpired?: boolean;
+  inGracePeriod?: boolean;
+  gracePeriodDaysRemaining?: number;
+  suspensionEffectiveDate?: string;
+  isSuspended?: boolean;
+  suspensionReason?: 'safety' | 'misconduct' | 'document_expired' | string;
   expiryDate?: string;
   docType?: string;
   docNumber?: string;
