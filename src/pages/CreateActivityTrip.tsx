@@ -473,11 +473,8 @@ export default function CreateActivityTrip() {
         await createActivityTrip(payload);
       }
 
-      if (isPartnerFlow) {
-        navigate(`/host/activities?partner=true&tab=${type === 'trip' ? 'trips' : 'activities'}`);
-      } else {
-        navigate('/host/activities');
-      }
+      const targetTab = type === 'trip' ? 'trips' : 'activities';
+      navigate(`/partner/dashboard?tab=${targetTab}`);
     } catch (err) {
       console.error('Error saving activity/trip:', err);
       setErrorMsg('Failed to save experience. Please check your network and try again.');
@@ -514,11 +511,11 @@ export default function CreateActivityTrip() {
         {/* Top Breadcrumb & Navigation */}
         <div className="flex items-center justify-between">
           <Link
-            to={isPartnerFlow ? "/partner" : "/host/activities"}
+            to={isPartnerFlow ? "/partner" : `/partner/dashboard?tab=${type === 'trip' ? 'trips' : 'activities'}`}
             className="inline-flex items-center gap-2 text-xs font-bold text-gray-600 hover:text-gray-900 bg-white px-3.5 py-2 rounded-xl border border-gray-200 shadow-2xs transition-colors"
           >
             <ArrowLeft size={14} />
-            <span>{isPartnerFlow ? "Return to Partner Categories" : "Back to Activities & Trips Dashboard"}</span>
+            <span>{isPartnerFlow ? "Return to Partner Categories" : "Back to Partner Dashboard"}</span>
           </Link>
           <div className="flex items-center gap-2 text-xs font-semibold text-gray-500">
             <span>Step {currentStep} of {totalSteps}</span>

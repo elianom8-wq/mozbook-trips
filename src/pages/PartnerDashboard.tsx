@@ -72,6 +72,8 @@ import {
   getOperatorDebits,
   updateActivityTrip
 } from '../services/activityTripService';
+import { DmcProfile } from '../types/dmc';
+import { getDmcProfile, getHostTravelPackages } from '../services/dmcService';
 
 type DashboardTab = 'overview' | 'accommodations' | 'activities' | 'trips' | 'transport' | 'bookings' | 'clients' | 'earnings' | 'account';
 
@@ -142,6 +144,8 @@ export default function PartnerDashboard() {
     outstandingLiabilityMzn: 0
   });
   const [verification, setVerification] = useState<HostVerification | null>(null);
+  const [dmcProfile, setDmcProfile] = useState<DmcProfile | null>(null);
+  const [dmcPackagesCount, setDmcPackagesCount] = useState<number>(0);
   const [operatorDebitsList, setOperatorDebitsList] = useState<OperatorInventoryDebit[]>([]);
   const [inventoryConflictError, setInventoryConflictError] = useState<string | null>(null);
 
@@ -345,6 +349,18 @@ export default function PartnerDashboard() {
       // 8. Fetch Verification Status
       const userVerif = await getUserVerification(user.uid);
       setVerification(userVerif);
+
+      // 9. Fetch Travel / DMC Profile & Active Packages
+      try {
+        const dmc = await getDmcProfile(user.uid);
+        setDmcProfile(dmc);
+        if (dmc) {
+          const pkgs = await getHostTravelPackages(user.uid);
+          setDmcPackagesCount(pkgs.length);
+        }
+      } catch (dmcErr) {
+        console.warn('Could not load DMC profile in partner dashboard:', dmcErr);
+      }
     } catch (err) {
       console.error('Error loading partner dashboard data:', err);
     } finally {
@@ -1145,6 +1161,15 @@ export default function PartnerDashboard() {
             </span>
           </button>
 
+          <Link
+            to={dmcProfile?.status === 'approved' ? "/partner/dmc/dashboard" : "/partner/dmc/onboard"}
+            className="py-2 px-3.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200"
+            title={dmcProfile?.status === 'approved' ? "Open DMC Dashboard" : "Travel / DMC Onboarding & Registration"}
+          >
+            <Globe size={14} className="text-[#009A60]" />
+            <span>Travel / DMC {dmcProfile?.status === 'approved' ? 'Hub' : 'Operations'}</span>
+          </Link>
+
           <button
             onClick={() => setActiveTab('bookings')}
             className={`py-2 px-3.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
@@ -1364,25 +1389,192 @@ export default function PartnerDashboard() {
 
             </div>
 
-            {/* Future Expansion Offerings */}
-            <div className="bg-gray-100/70 border border-gray-200 rounded-3xl p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-gray-200 text-gray-600 flex items-center justify-center shrink-0">
-                  <Globe size={20} />
-                </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-bold text-gray-800">Travel / DMC Agency Operations</span>
-                    <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 text-[10px] font-bold">
-                      Future Partner Offering
-                    </span>
+            {/* Travel / DMC Agency Operations (Canonical Partner Offering) */}
+            <div className="bg-white rounded-3xl border border-gray-200 p-6 shadow-xs transition-all hover:border-emerald-200">
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-5">
+                <div className="flex items-start gap-4">
+                  <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 ${
+                    dmcProfile?.status === 'approved'
+                      ? 'bg-emerald-100 text-[#009A60]'
+                      : dmcProfile?.status === 'pending_review'
+                      ? 'bg-blue-100 text-blue-700'
+                      : dmcProfile?.status === 'rejected'
+                      ? 'bg-rose-100 text-rose-700'
+                      : dmcProfile?.status === 'draft'
+                      ? 'bg-amber-100 text-amber-800'
+                      : 'bg-emerald-50 text-[#009A60]'
+                  }`}>
+                    <Globe size={24} />
                   </div>
-                  <p className="text-xs text-gray-500 mt-0.5">
-                    Inbound tour operator packages, multi-day itinerary assembly, and custom DMC services will unlock soon.
-                  </p>
+                  <div className="space-y-1.5">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="text-base font-bold text-gray-900">
+                        Travel / DMC Agency Operations
+                      </h3>
+                      {!dmcProfile && (
+                        <span className="px-2.5 py-0.5 rounded-full bg-emerald-50 text-[#009A60] border border-emerald-200 text-[11px] font-bold">
+                          Partner Offering Available
+                        </span>
+                      )}
+                      {dmcProfile?.status === 'approved' && (
+                        <span className="px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200 text-[11px] font-bold flex items-center gap-1">
+                          <CheckCircle2 size={12} className="text-[#009A60]" />
+                          <span>Verified DMC Partner</span>
+                        </span>
+                      )}
+                      {dmcProfile?.status === 'pending_review' && (
+                        <span className="px-2.5 py-0.5 rounded-full bg-blue-50 text-blue-800 border border-blue-200 text-[11px] font-bold flex items-center gap-1">
+                          <Clock size={12} className="text-blue-600" />
+                          <span>Application Under Review</span>
+                        </span>
+                      )}
+                      {dmcProfile?.status === 'draft' && (
+                        <span className="px-2.5 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200 text-[11px] font-bold flex items-center gap-1">
+                          <Clock size={12} className="text-amber-600" />
+                          <span>Draft Application</span>
+                        </span>
+                      )}
+                      {dmcProfile?.status === 'additional_info_required' && (
+                        <span className="px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300 text-[11px] font-bold flex items-center gap-1">
+                          <AlertCircle size={12} className="text-amber-700" />
+                          <span>Information Required</span>
+                        </span>
+                      )}
+                      {dmcProfile?.status === 'rejected' && (
+                        <span className="px-2.5 py-0.5 rounded-full bg-rose-50 text-rose-800 border border-rose-200 text-[11px] font-bold flex items-center gap-1">
+                          <AlertCircle size={12} className="text-rose-600" />
+                          <span>Review Feedback</span>
+                        </span>
+                      )}
+                      {dmcProfile?.status === 'suspended' && (
+                        <span className="px-2.5 py-0.5 rounded-full bg-gray-100 text-gray-800 border border-gray-300 text-[11px] font-bold">
+                          DMC Suspended
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs md:text-sm text-gray-600 font-medium">
+                      Manage destination packages, multi-day itineraries, and coordinated travel experiences.
+                    </p>
+                    
+                    {/* Dynamic state description */}
+                    {!dmcProfile && (
+                      <p className="text-xs text-gray-500">
+                        Create multi-day bespoke itineraries, coordinate verified lodge and transport suppliers, and receive comprehensive traveler bookings across Mozambique.
+                      </p>
+                    )}
+                    {dmcProfile?.status === 'approved' && (
+                      <div className="text-xs text-gray-500 flex flex-wrap items-center gap-2 pt-0.5">
+                        <span className="font-bold text-gray-800">{dmcProfile.tradingName || dmcProfile.legalBusinessName}</span>
+                        <span>•</span>
+                        <span className="font-semibold text-gray-700">{dmcPackagesCount} travel package{dmcPackagesCount === 1 ? '' : 's'}</span>
+                        <span>•</span>
+                        <span>INATUR Reg: <strong className="font-mono text-gray-700">{dmcProfile.inaturLicenseNumber}</strong></span>
+                      </div>
+                    )}
+                    {dmcProfile?.status === 'pending_review' && (
+                      <p className="text-xs text-blue-700">
+                        Application for <strong className="text-blue-900">{dmcProfile.tradingName || dmcProfile.legalBusinessName}</strong> (INATUR License: <span className="font-mono">{dmcProfile.inaturLicenseNumber || 'On file'}</span>) has been submitted and is currently being audited by MozBook compliance.
+                      </p>
+                    )}
+                    {dmcProfile?.status === 'draft' && (
+                      <p className="text-xs text-amber-700 font-medium">
+                        Your DMC onboarding application is partially saved. Complete your business details, operating provinces, and license documents to submit for verification.
+                      </p>
+                    )}
+                    {dmcProfile?.status === 'rejected' && (
+                      <p className="text-xs text-rose-700 font-medium">
+                        Application not approved: {dmcProfile.rejectionReason || dmcProfile.adminNotes || 'Verification criteria could not be met. Review feedback and update your documents.'}
+                      </p>
+                    )}
+                    {dmcProfile?.status === 'additional_info_required' && (
+                      <p className="text-xs text-amber-800 font-medium">
+                        Action required: {dmcProfile.adminNotes || 'Please provide updated license details or additional documentation.'}
+                      </p>
+                    )}
+                    {dmcProfile?.status === 'suspended' && (
+                      <p className="text-xs text-gray-600 font-medium">
+                        DMC operations suspended: {dmcProfile.suspensionReason || dmcProfile.adminNotes || 'Please contact MozBook partner support.'}
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                {/* Card Action Buttons */}
+                <div className="flex flex-wrap items-center gap-2.5 shrink-0 self-start lg:self-center">
+                  {!dmcProfile && (
+                    <Link
+                      to="/partner/dmc/onboard"
+                      className="px-4 py-2.5 bg-[#009A60] hover:bg-[#008250] text-white rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <span>Complete DMC Registration</span>
+                      <ArrowRight size={14} />
+                    </Link>
+                  )}
+                  {dmcProfile?.status === 'approved' && (
+                    <>
+                      <Link
+                        to="/partner/dmc/dashboard"
+                        className="px-4 py-2.5 bg-[#009A60] hover:bg-[#008250] text-white rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <span>Open DMC Dashboard</span>
+                        <ArrowRight size={14} />
+                      </Link>
+                      <Link
+                        to="/partner/dmc/packages/create"
+                        className="px-3.5 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-800 rounded-xl text-xs font-bold transition-all flex items-center gap-1 cursor-pointer"
+                      >
+                        <Plus size={14} />
+                        <span>Create Package</span>
+                      </Link>
+                    </>
+                  )}
+                  {dmcProfile?.status === 'draft' && (
+                    <Link
+                      to="/partner/dmc/onboard"
+                      className="px-4 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <span>Continue Application</span>
+                      <ArrowRight size={14} />
+                    </Link>
+                  )}
+                  {dmcProfile?.status === 'pending_review' && (
+                    <Link
+                      to="/partner/dmc/onboard"
+                      className="px-4 py-2.5 bg-blue-50 hover:bg-blue-100 text-blue-800 border border-blue-200 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <span>Application Under Review</span>
+                      <ChevronRight size={14} />
+                    </Link>
+                  )}
+                  {dmcProfile?.status === 'rejected' && (
+                    <Link
+                      to="/partner/dmc/onboard"
+                      className="px-4 py-2.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <span>View Application Status</span>
+                      <ArrowRight size={14} />
+                    </Link>
+                  )}
+                  {dmcProfile?.status === 'additional_info_required' && (
+                    <Link
+                      to="/partner/dmc/onboard"
+                      className="px-4 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <span>Update Application</span>
+                      <ArrowRight size={14} />
+                    </Link>
+                  )}
+                  {dmcProfile?.status === 'suspended' && (
+                    <Link
+                      to="/partner/dmc/onboard"
+                      className="px-4 py-2.5 bg-gray-800 hover:bg-gray-900 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <span>View Application Status</span>
+                      <ChevronRight size={14} />
+                    </Link>
+                  )}
                 </div>
               </div>
-              <span className="text-xs font-bold text-gray-500 self-start sm:self-auto">Coming Soon</span>
             </div>
 
             {/* Recent Bookings Roster Preview */}

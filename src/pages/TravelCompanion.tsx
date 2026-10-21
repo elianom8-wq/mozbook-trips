@@ -64,15 +64,19 @@ export default function TravelCompanion() {
     'Santa Maria & Inhaca',
   ];
 
-  const currentUserId = user?.uid || 'guest_traveler';
-  const currentUserEmail = user?.email || 'traveler@mozbook.mz';
-
   const loadData = async () => {
+    if (!user) {
+      setGroups([]);
+      setInvitations([]);
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
     try {
       const [userGroups, userInvs] = await Promise.all([
-        travelGroupService.getUserGroups(currentUserId, currentUserEmail),
-        travelGroupService.getUserPendingInvitations(currentUserId, currentUserEmail)
+        travelGroupService.getUserGroups(user.uid, user.email || ''),
+        travelGroupService.getUserPendingInvitations(user.uid, user.email || '')
       ]);
       setGroups(userGroups);
       setInvitations(userInvs);
@@ -85,7 +89,7 @@ export default function TravelCompanion() {
 
   useEffect(() => {
     loadData();
-  }, [user]);
+  }, [user?.uid]);
 
   const handleCreateGroup = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -103,8 +107,8 @@ export default function TravelCompanion() {
       setCreateError('Please provide both travel start and end dates');
       return;
     }
-    if (formData.endDate < formData.startDate) {
-      setCreateError('End date cannot be earlier than start date');
+    if (!user) {
+      setCreateError('Please sign in to create a private travel group.');
       return;
     }
 
@@ -112,10 +116,10 @@ export default function TravelCompanion() {
     try {
       const newGroup = await travelGroupService.createTravelGroup(
         {
-          uid: currentUserId,
-          displayName: user?.displayName || 'Group Organizer',
-          email: user?.email || currentUserEmail,
-          photoURL: user?.photoURL || undefined
+          uid: user.uid,
+          displayName: user.displayName || 'Group Organizer',
+          email: user.email || '',
+          photoURL: user.photoURL || undefined
         },
         formData
       );
@@ -139,12 +143,13 @@ export default function TravelCompanion() {
   };
 
   const handleAcceptInvitation = async (invitation: GroupInvitation) => {
+    if (!user) return;
     try {
       await travelGroupService.acceptInvitation(invitation.id, {
-        uid: currentUserId,
-        displayName: user?.displayName || 'Traveler',
-        email: user?.email || currentUserEmail,
-        photoURL: user?.photoURL || undefined
+        uid: user.uid,
+        displayName: user.displayName || 'Traveler',
+        email: user.email || '',
+        photoURL: user.photoURL || undefined
       });
       await loadData();
       navigate(`/travel-companion/group/${invitation.groupId}`);
@@ -154,9 +159,10 @@ export default function TravelCompanion() {
   };
 
   const handleDeclineInvitation = async (invitationId: string) => {
+    if (!user) return;
     if (!window.confirm('Are you sure you want to decline this invitation?')) return;
     try {
-      await travelGroupService.declineInvitation(invitationId, { uid: currentUserId });
+      await travelGroupService.declineInvitation(invitationId, { uid: user.uid });
       await loadData();
     } catch (err: any) {
       alert(err?.message || 'Failed to decline invitation');
@@ -380,7 +386,7 @@ export default function TravelCompanion() {
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
               {filteredGroups.map((group) => {
-                const isOwner = group.ownerId === currentUserId;
+                const isOwner = Boolean(user && group.ownerId === user.uid);
                 const statusBadge = 
                   group.status === 'active' 
                     ? { bg: 'bg-emerald-100 text-emerald-800', label: 'Active Trip' }

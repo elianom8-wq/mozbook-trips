@@ -84,7 +84,8 @@ export const PARTNER_CATEGORIES: PartnerCategoryOption[] = [
     description: 'Offer destination management, travel agency, tour operator or specialist tourism services.',
     examples: 'Destination Management (DMC) · Inbound Packages · Custom Itineraries',
     icon: Globe,
-    isAvailableNow: false
+    existingRoute: '/partner/dmc/onboard',
+    isAvailableNow: true
   }
 ];
 
@@ -121,7 +122,11 @@ export default function PartnerCategorySelection() {
         navigate('/partner/transport/create', { state: { partnerCategory: 'transport', partnerFlow: true } });
         return;
       }
-      // travel_dmc -> display branch screen
+      if (selected === 'travel_dmc') {
+        navigate('/partner/dmc/onboard', { state: { partnerCategory: 'travel_dmc', partnerFlow: true } });
+        return;
+      }
+      // fallback
       setShowMultiBranchModal(true);
       return;
     }
@@ -154,6 +159,9 @@ export default function PartnerCategorySelection() {
 
         {/* Header Banner */}
         <div className="text-center max-w-2xl mx-auto space-y-3">
+          <div className="flex justify-center mb-1">
+            <MozBookLogo variant="full" size="md" />
+          </div>
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#e6f7f0] text-[#009A60] text-xs font-bold uppercase tracking-wider">
             <ShieldCheck size={14} />
             <span>MozBook Partner Onboarding</span>

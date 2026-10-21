@@ -89,7 +89,10 @@ service cloud.firestore {
     match /listings/{listingId} {
       allow read: if true; // Publicly readable
       allow create: if isAuthenticated() && isValidListing(request.resource.data);
-      allow update, delete: if isAuthenticated() && resource.data.hostId == request.auth.uid && isValidListing(request.resource.data);
+      allow update, delete: if isAuthenticated() && (
+        (resource.data.hostId == request.auth.uid && isValidListing(request.resource.data)) ||
+        isAdmin()
+      );
     }
 
     // Special Offers & Seasonal Pricing

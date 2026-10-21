@@ -950,3 +950,19 @@ export async function getGroupActivityBookings(travelGroupId: string): Promise<A
   const local = getLocalBookings();
   return local.filter(b => b.travelGroupId === travelGroupId);
 }
+
+/**
+ * Platform-Wide Session Isolation:
+ * Wipes local activity bookings and operator debits cache from storage.
+ */
+export function clearLocalActivityBookingsCache(): void {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem(STORAGE_KEY_BOOKINGS);
+      localStorage.removeItem(STORAGE_KEY_OPERATOR_DEBITS);
+    }
+  } catch (e) {
+    console.warn('[activityTripService] Error clearing local activity bookings cache:', e);
+  }
+}
+

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { BrowserRouter as Router, Routes, Route, Link, useLocation, Navigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Link, useLocation, useNavigate, Navigate } from 'react-router-dom';
 import Navbar from './components/Navbar';
+import MozBookLogo from './components/MozBookLogo';
 import Home from './pages/Home';
 import ListingDetails from './pages/ListingDetails';
 import CreateListing from './pages/CreateListing';
@@ -13,6 +14,10 @@ import CreateActivityTrip from './pages/CreateActivityTrip';
 import CreateTransport from './pages/CreateTransport';
 import PartnerCategorySelection from './pages/PartnerCategorySelection';
 import PartnerDashboard from './pages/PartnerDashboard';
+import DmcOnboarding from './pages/DmcOnboarding';
+import DmcDashboard from './pages/DmcDashboard';
+import CreateTravelPackage from './pages/CreateTravelPackage';
+import TravelPackageDetails from './pages/TravelPackageDetails';
 import Discover from './pages/Discover';
 import InfoHub from './pages/InfoHub';
 import Eateries from './pages/Eateries';
@@ -41,11 +46,26 @@ import { SearchProvider } from './context/SearchContext';
 import AppSettingsModal from './components/AppSettingsModal';
 import SearchModal from './components/SearchModal';
 import { useAuth } from './context/AuthContext';
+import { consumeFreshAuthNavigationPending } from './services/authSessionManager';
 
 function AppLayout() {
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const location = useLocation();
-  const { isAdmin } = useAuth();
+  const navigate = useNavigate();
+  const { user, loading: authLoading, isAdmin } = useAuth();
+
+  // Enforce MozBook Universal Navigation Policy (Requirement 1 & 5):
+  // New login or account switch: Always start at /discover.
+  // Never carry over the previous user's active page or unfinished workflow.
+  React.useEffect(() => {
+    if (authLoading) return;
+
+    if (consumeFreshAuthNavigationPending()) {
+      if (location.pathname !== '/discover') {
+        navigate('/discover', { replace: true });
+      }
+    }
+  }, [user?.uid, authLoading, location.pathname, navigate]);
 
   // Pure Admin Operations Console routes have their own internal layout
   const isPureAdminConsole = location.pathname.startsWith('/admin');
@@ -83,6 +103,14 @@ function AppLayout() {
         <Route path="/partner/dashboard" element={<PartnerDashboard />} />
         <Route path="/partner/manage" element={<PartnerDashboard />} />
         <Route path="/partner/business" element={<PartnerDashboard />} />
+
+        {/* MozBook Travel / Destination Management Company (DMC) Routes */}
+        <Route path="/partner/dmc/onboard" element={<DmcOnboarding />} />
+        <Route path="/partner/dmc/dashboard" element={<DmcDashboard />} />
+        <Route path="/partner/dmc" element={<Navigate to="/partner/dmc/dashboard" replace />} />
+        <Route path="/partner/dmc/packages/create" element={<CreateTravelPackage />} />
+        <Route path="/partner/dmc/packages/edit/:id" element={<CreateTravelPackage />} />
+        <Route path="/packages/:id" element={<TravelPackageDetails />} />
         
         {/* MozBook Discover Route */}
         <Route path="/discover" element={<Discover />} />
@@ -191,6 +219,9 @@ function AppLayout() {
       {/* Footer - only shown on public MozBook */}
       {!isPureAdminConsole && (
         <footer className="border-t border-gray-200 bg-gray-50 py-12 px-4 md:px-8 mt-12 mb-28 md:mb-24">
+          <div className="max-w-7xl mx-auto mb-8 pb-6 border-b border-gray-200/80">
+            <MozBookLogo variant="full" size="md" />
+          </div>
           <div className="max-w-7xl mx-auto grid grid-cols-2 md:grid-cols-4 gap-8">
             <div>
               <h4 className="font-semibold text-gray-900 mb-4">Support & SOS</h4>

@@ -10,6 +10,12 @@ import {
 import { doc, getDoc, setDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from '../firebase';
 import { adminService } from '../services/adminService';
+import { 
+  evaluateSessionTransition,
+  commitActiveSessionUid,
+  setFreshAuthNavigationPending,
+  purgeAllUserSessionData
+} from '../services/authSessionManager';
 
 export const ADMIN_EMAIL = 'mozbookinfo@gmail.com';
 
@@ -71,6 +77,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setTokenClaims(null);
       setProfile(null);
       setUser(currentUser);
+
+      const transition = evaluateSessionTransition(currentUser ? currentUser.uid : null);
+
+      if (transition.type === 'account_switch') {
+        // Account Switch: Different user signed in than previous session -> wipe previous user session data
+        purgeAllUserSessionData();
+        commitActiveSessionUid(currentUser!.uid);
+        setFreshAuthNavigationPending();
+      } else if (transition.type === 'new_login') {
+        // Fresh Login from unauthenticated state
+        purgeAllUserSessionData();
+        commitActiveSessionUid(currentUser!.uid);
+        setFreshAuthNavigationPending();
+      } else if (transition.type === 'logged_out') {
+        // Logged out
+        purgeAllUserSessionData();
+        commitActiveSessionUid(null);
+      } else {
+        // same_session (page refresh by same authenticated user in same tab)
+        commitActiveSessionUid(currentUser!.uid);
+      }
 
       if (currentUser) {
         try {
@@ -146,6 +173,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const signedInUser = userCredential.user;
 
       if (signedInUser) {
+        // Enforce platform-wide rule: purge prior session data, mark fresh auth
+        purgeAllUserSessionData();
+        commitActiveSessionUid(signedInUser.uid);
+        setFreshAuthNavigationPending();
+
         // Evaluate admin status on fresh interactive credential
         const { authorized } = await evaluateAdminStatus(signedInUser);
 
@@ -185,12 +217,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setTokenClaims(null);
     setProfile(null);
     setUser(null);
-    try {
-      localStorage.removeItem('mozbook_admin_audit_logs_cache');
-      sessionStorage.clear();
-    } catch {
-      // ignore
-    }
+    
+    // Platform-wide rule: purge all cached data and set transition
+    purgeAllUserSessionData();
+    commitActiveSessionUid(null);
+    setFreshAuthNavigationPending();
+
     try {
       await signOut(auth);
     } catch (error) {

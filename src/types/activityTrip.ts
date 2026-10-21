@@ -1,4 +1,4 @@
-export type ActivityTripType = 'activity' | 'trip' | 'transport';
+export type ActivityTripType = 'activity' | 'trip' | 'transport' | 'dmc_package';
 
 export type ActivityTripStatus = 'draft' | 'pending' | 'published' | 'paused';
 

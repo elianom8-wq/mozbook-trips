@@ -11,7 +11,8 @@ import {
   where, 
   serverTimestamp,
   onSnapshot,
-  orderBy
+  orderBy,
+  writeBatch
 } from 'firebase/firestore';
 import { db, auth } from '../firebase';
 import {
@@ -947,34 +948,264 @@ export const getAllVerifications = async (): Promise<HostVerification[]> => {
   }
 };
 
+export interface ListingEligibilityCheck {
+  eligibleForVerifiedBadge: boolean;
+  eligibleForAutoPublish: boolean;
+  reason?: string;
+}
+
+/**
+ * Authoritative evaluation of listing eligibility for automatic publishing & verification badge.
+ * Strictly preserves manual suspensions, compliance blocks, and draft incomplete states.
+ */
+export function evaluateListingAutoPublishEligibility(listing: Partial<Listing>): ListingEligibilityCheck {
+  // 1. Basic structural validity
+  const hasTitle = Boolean(listing.title && listing.title.trim().length > 0);
+  const hasLocation = Boolean(listing.location && listing.location.trim().length > 0);
+  const hasPrice = typeof listing.price === 'number' && listing.price > 0;
+  const hasPhotos = (Array.isArray(listing.images) && listing.images.length > 0) || 
+                    (Array.isArray(listing.labeledImages) && listing.labeledImages.length > 0);
+
+  if (!hasTitle || !hasLocation || !hasPrice) {
+    return {
+      eligibleForVerifiedBadge: false,
+      eligibleForAutoPublish: false,
+      reason: 'Incomplete listing structure: missing title, location, or valid price'
+    };
+  }
+
+  // 2. Explicit suspensions, safety freezes, and blocks must be strictly preserved
+  const isSuspended = (listing as any).isSuspended === true || 
+                      (listing as any).suspended === true || 
+                      (listing as any).status === 'suspended' || 
+                      (listing as any).accountStatus === 'suspended';
+
+  if (isSuspended) {
+    return {
+      eligibleForVerifiedBadge: false,
+      eligibleForAutoPublish: false,
+      reason: 'Listing is under manual safety suspension or administrative freeze'
+    };
+  }
+
+  // 3. Rejected listings must remain rejected unless explicitly re-evaluated
+  if ((listing as any).status === 'rejected') {
+    return {
+      eligibleForVerifiedBadge: false,
+      eligibleForAutoPublish: false,
+      reason: 'Listing was explicitly rejected by compliance'
+    };
+  }
+
+  // 4. Draft listings or listings missing photos should not be auto-published, but can receive verified host badge
+  const isExplicitDraft = (listing as any).status === 'draft';
+  if (isExplicitDraft || !hasPhotos) {
+    return {
+      eligibleForVerifiedBadge: true,
+      eligibleForAutoPublish: false,
+      reason: isExplicitDraft ? 'Listing is marked as draft by host' : 'Listing missing photos'
+    };
+  }
+
+  // 5. Eligible for full auto-publishing & verified host badge
+  return {
+    eligibleForVerifiedBadge: true,
+    eligibleForAutoPublish: true,
+  };
+}
+
+export interface HostListingSyncResult {
+  success: boolean;
+  totalListingsFound: number;
+  eligibleListingsUpdated: number;
+  skippedIneligibleCount: number;
+  error?: string;
+}
+
+/**
+ * Synchronizes existing listings owned by the verified host.
+ * Idempotent: Targeted field updates only (isHostVerified, status, updatedAt).
+ * Never mutates titles, descriptions, prices, photos, accommodations, coordinates, or host IDs.
+ */
+export const syncHostListingsVerification = async (
+  userId: string,
+  isHostVerified: boolean
+): Promise<HostListingSyncResult> => {
+  if (!userId) {
+    return {
+      success: false,
+      totalListingsFound: 0,
+      eligibleListingsUpdated: 0,
+      skippedIneligibleCount: 0,
+      error: 'Cannot synchronize listings: missing userId'
+    };
+  }
+
+  // 1. Authoritative server-side execution if authenticated
+  if (auth.currentUser && typeof fetch !== 'undefined') {
+    try {
+      const idToken = await auth.currentUser.getIdToken();
+      const res = await fetch('/api/admin/hosts/sync-listings', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${idToken}`,
+          'x-user-id': auth.currentUser.uid,
+          'x-user-email': auth.currentUser.email || ''
+        },
+        body: JSON.stringify({
+          hostId: userId,
+          isHostVerified
+        })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        return {
+          success: true,
+          totalListingsFound: data.totalListingsFound || 0,
+          eligibleListingsUpdated: data.eligibleListingsUpdated || 0,
+          skippedIneligibleCount: data.skippedIneligibleCount || 0
+        };
+      }
+    } catch (apiErr) {
+      console.warn('Backend sync-listings call fell through to client batch:', apiErr);
+    }
+  }
+
+  const path = COLLECTION;
+  try {
+    const q = query(collection(db, path), where('hostId', '==', userId));
+    const snap = await getDocs(q);
+
+    if (snap.empty) {
+      return {
+        success: true,
+        totalListingsFound: 0,
+        eligibleListingsUpdated: 0,
+        skippedIneligibleCount: 0
+      };
+    }
+
+    const batch = writeBatch(db);
+    let updatedCount = 0;
+    let skippedCount = 0;
+
+    snap.docs.forEach((docSnap) => {
+      const data = docSnap.data() as Listing;
+      const docRef = doc(db, COLLECTION, docSnap.id);
+
+      if (isHostVerified) {
+        const eligibility = evaluateListingAutoPublishEligibility(data);
+
+        if (!eligibility.eligibleForVerifiedBadge) {
+          skippedCount++;
+          return;
+        }
+
+        const updates: Record<string, any> = {
+          isHostVerified: true,
+          updatedAt: serverTimestamp()
+        };
+
+        // If eligible for auto-publishing and currently pending/unapproved
+        if (eligibility.eligibleForAutoPublish) {
+          const currentStatus = (data as any).status;
+          if (!currentStatus || currentStatus === 'pending' || currentStatus === 'pending_approval' || currentStatus === 'pending_verification') {
+            updates.status = 'published';
+          }
+        }
+
+        batch.update(docRef, updates);
+        updatedCount++;
+      } else {
+        // Revoke / unverify
+        batch.update(docRef, {
+          isHostVerified: false,
+          updatedAt: serverTimestamp()
+        });
+        updatedCount++;
+      }
+    });
+
+    if (updatedCount > 0) {
+      await batch.commit();
+    }
+
+    return {
+      success: true,
+      totalListingsFound: snap.size,
+      eligibleListingsUpdated: updatedCount,
+      skippedIneligibleCount: skippedCount
+    };
+  } catch (err: any) {
+    console.error('Error synchronizing host listings verification:', err);
+    return {
+      success: false,
+      totalListingsFound: 0,
+      eligibleListingsUpdated: 0,
+      skippedIneligibleCount: 0,
+      error: err?.message || 'Failed to synchronize host listings'
+    };
+  }
+};
+
+export interface UpdateVerificationStatusResult {
+  success: boolean;
+  verificationUpdated: boolean;
+  userProfileUpdated: boolean;
+  listingSyncResult?: HostListingSyncResult;
+  error?: string;
+}
+
 export const updateVerificationStatus = async (
   verificationId: string, 
   userId: string,
   status: VerificationStatus, 
   adminNotes?: string
-) => {
+): Promise<UpdateVerificationStatusResult> => {
   const path = `${VERIFICATIONS_COLLECTION}/${verificationId}`;
   try {
     await updateDoc(doc(db, VERIFICATIONS_COLLECTION, verificationId), {
       status,
       adminNotes: adminNotes || '',
       reviewedAt: serverTimestamp(),
-      reviewedBy: auth.currentUser?.email || 'admin',
+      reviewedBy: auth.currentUser?.email || 'mozbookinfo@gmail.com',
     });
 
-    // Update user profile status
+    let userProfileUpdated = false;
     try {
       await updateDoc(doc(db, 'users', userId), {
         verificationStatus: status,
         verifiedAt: status === 'verified' ? serverTimestamp() : null,
       });
+      userProfileUpdated = true;
     } catch (e) {
       console.warn('Could not update user doc verificationStatus', e);
     }
-    return true;
+
+    // Synchronize eligible existing listings for this host
+    let listingSyncResult: HostListingSyncResult | undefined;
+    if (status === 'verified') {
+      listingSyncResult = await syncHostListingsVerification(userId, true);
+    } else if (status === 'rejected') {
+      listingSyncResult = await syncHostListingsVerification(userId, false);
+    }
+
+    return {
+      success: true,
+      verificationUpdated: true,
+      userProfileUpdated,
+      listingSyncResult
+    };
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, path);
-    return false;
+    return {
+      success: false,
+      verificationUpdated: false,
+      userProfileUpdated: false,
+      error: error instanceof Error ? error.message : String(error)
+    };
   }
 };
 

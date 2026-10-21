@@ -108,11 +108,22 @@ export default function GroupDetails() {
   const [submittingGuest, setSubmittingGuest] = useState(false);
   const [guestError, setGuestError] = useState('');
 
-  const currentUserId = user?.uid || 'guest_traveler';
-  const currentUserEmail = user?.email || 'traveler@mozbook.mz';
+  const currentUserId = user?.uid || '';
+  const currentUserEmail = user?.email || '';
 
   const loadGroupData = async () => {
     if (!id) return;
+
+    if (!user) {
+      setError('Authentication required: Please sign in to access this private travel group workspace.');
+      setGroup(null);
+      setMembers([]);
+      setGroupBookings([]);
+      setItineraryItems([]);
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
     setError('');
     try {
@@ -133,6 +144,8 @@ export default function GroupDetails() {
         setError('This is a private Travel Companion group. Only invited and accepted group members can view this workspace.');
         setGroup(null);
         setMembers([]);
+        setGroupBookings([]);
+        setItineraryItems([]);
         return;
       }
 

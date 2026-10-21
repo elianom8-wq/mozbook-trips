@@ -100,7 +100,7 @@ export default function AdminLogin() {
       <div className="max-w-md w-full mx-auto my-auto">
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center p-3 bg-slate-900 border border-slate-800 rounded-2xl mb-4 shadow-lg shadow-black/50">
-            <MozBookLogo className="h-8 w-auto" />
+            <MozBookLogo variant="full" size="md" theme="dark" preferVector />
           </div>
           
           <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-[11px] font-mono font-bold uppercase tracking-wider mb-2">

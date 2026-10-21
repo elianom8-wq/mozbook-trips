@@ -127,19 +127,6 @@ export default function ListingDetails() {
         setLoading(false);
 
         if (data) {
-          // Check if previously saved pending booking config exists in sessionStorage to survive auth
-          try {
-            const saved = sessionStorage.getItem(`mozbook_pending_stay_config_${id}`);
-            if (saved) {
-              const parsed = JSON.parse(saved);
-              if (parsed.checkInDate) setCheckInDate(parsed.checkInDate);
-              if (parsed.checkOutDate) setCheckOutDate(parsed.checkOutDate);
-              if (parsed.adults) setAdults(Number(parsed.adults));
-              if (parsed.children !== undefined) setChildren(Number(parsed.children));
-              return;
-            }
-          } catch {}
-
           // Default initial dates based on listing availability or next-day window
           const today = new Date();
           const start = new Date(today);
@@ -815,16 +802,6 @@ export default function ListingDetails() {
                 if (isSubmitting) return;
                 setBookingError(null);
 
-                // Preserve context in sessionStorage across auth
-                try {
-                  sessionStorage.setItem(`mozbook_pending_stay_config_${listing.id}`, JSON.stringify({
-                    checkInDate,
-                    checkOutDate,
-                    adults,
-                    children
-                  }));
-                } catch {}
-
                 let currentUser = user;
                 if (!currentUser) {
                   try {
@@ -901,7 +878,6 @@ export default function ListingDetails() {
 
                   setCreatedBooking(newBooking);
                   setShowCheckoutModal(true);
-                  sessionStorage.removeItem(`mozbook_pending_stay_config_${listing.id}`);
                 } catch (err: any) {
                   console.error('Failed to create stay booking:', err);
                   setBookingError(err.message || 'Failed to submit stay reservation. Please try again.');

@@ -378,6 +378,123 @@ async function startServer() {
   });
 
   /**
+   * POST /api/admin/hosts/sync-listings
+   * Authoritative server-side synchronization of host listings upon verification or status change.
+   * Updates isHostVerified and transitions eligible pending listings to published.
+   * Strictly preserves suspensions, manual safety freezes, and incomplete drafts.
+   */
+  app.post("/api/admin/hosts/sync-listings", async (req, res) => {
+    try {
+      const user = await authenticateRequest(req);
+      if (!user) {
+        res.status(401).json({ success: false, error: "Authentication required." });
+        return;
+      }
+
+      if (!isUserAdmin(user)) {
+        res.status(403).json({
+          success: false,
+          error: "Forbidden: Administrator privileges required. Permanent administrator is mozbookinfo@gmail.com."
+        });
+        return;
+      }
+
+      const { hostId, isHostVerified } = req.body || {};
+      if (!hostId || typeof hostId !== 'string') {
+        res.status(400).json({ success: false, error: "hostId is required as a string." });
+        return;
+      }
+
+      const verified = Boolean(isHostVerified);
+      const adminDb = getPrivilegedFirestore();
+      const listingsSnap = await adminDb.collection('listings').where('hostId', '==', hostId).get();
+
+      if (listingsSnap.empty) {
+        res.status(200).json({
+          success: true,
+          totalListingsFound: 0,
+          eligibleListingsUpdated: 0,
+          skippedIneligibleCount: 0
+        });
+        return;
+      }
+
+      let eligibleUpdated = 0;
+      let skippedCount = 0;
+      const serverNow = new Date().toISOString();
+
+      const batch = adminDb.batch();
+
+      listingsSnap.docs.forEach((docSnap) => {
+        const data = docSnap.data();
+        const docRef = adminDb.collection('listings').doc(docSnap.id);
+
+        if (verified) {
+          const hasTitle = Boolean(data.title && String(data.title).trim().length > 0);
+          const hasLocation = Boolean((data.location && String(data.location).trim().length > 0) || (data.city && String(data.city).trim().length > 0));
+          const hasPrice = typeof data.price === 'number' && data.price > 0;
+          const hasPhotos = (Array.isArray(data.images) && data.images.length > 0) ||
+                            (Array.isArray(data.labeledImages) && data.labeledImages.length > 0);
+
+          if (!hasTitle || !hasLocation || !hasPrice) {
+            skippedCount++;
+            return;
+          }
+
+          const isSuspended = data.isSuspended === true ||
+                              data.suspended === true ||
+                              data.status === 'suspended' ||
+                              data.accountStatus === 'suspended';
+          if (isSuspended) {
+            skippedCount++;
+            return;
+          }
+
+          if (data.status === 'rejected') {
+            skippedCount++;
+            return;
+          }
+
+          const updates: Record<string, any> = {
+            isHostVerified: true,
+            updatedAt: serverNow
+          };
+
+          const isDraft = data.status === 'draft';
+          if (!isDraft && hasPhotos) {
+            if (!data.status || data.status === 'pending' || data.status === 'pending_approval' || data.status === 'pending_verification') {
+              updates.status = 'published';
+            }
+          }
+
+          batch.update(docRef, updates);
+          eligibleUpdated++;
+        } else {
+          batch.update(docRef, {
+            isHostVerified: false,
+            updatedAt: serverNow
+          });
+          eligibleUpdated++;
+        }
+      });
+
+      if (eligibleUpdated > 0) {
+        await batch.commit();
+      }
+
+      res.status(200).json({
+        success: true,
+        totalListingsFound: listingsSnap.size,
+        eligibleListingsUpdated: eligibleUpdated,
+        skippedIneligibleCount: skippedCount
+      });
+    } catch (err: any) {
+      console.error("[API] sync-listings error:", err);
+      res.status(500).json({ success: false, error: err.message || "Failed to synchronize host listings." });
+    }
+  });
+
+  /**
    * GET /api/admin/financials/overview
    * Authoritative financial & reconciliation metrics for administrator console.
    * Strictly verifies administrator credentials, deduplicates records, and

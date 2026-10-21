@@ -49,7 +49,7 @@ export default function MozBookTrips() {
   const [isLoading, setIsLoading] = useState(true);
 
   // Filters
-  const [selectedType, setSelectedType] = useState<'all' | 'activity' | 'trip' | 'transport'>('all');
+  const [selectedType, setSelectedType] = useState<'all' | 'activity' | 'trip' | 'transport' | 'dmc_package'>('all');
   const [selectedCity, setSelectedCity] = useState<string>('all');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [isLocating, setIsLocating] = useState(false);
@@ -167,7 +167,7 @@ export default function MozBookTrips() {
     if (selectedType !== 'all') {
       if (act.type !== selectedType) return false;
     } else {
-      if (act.type !== 'activity' && act.type !== 'trip' && act.type !== 'transport') {
+      if (act.type !== 'activity' && act.type !== 'trip' && act.type !== 'transport' && act.type !== 'dmc_package') {
         return false;
       }
     }
@@ -361,7 +361,7 @@ export default function MozBookTrips() {
               </Link>
 
               <Link
-                to="/host/activities"
+                to="/partner/dashboard?tab=activities"
                 className="inline-flex items-center gap-2 px-4 py-2 bg-white text-[#009A60] hover:bg-emerald-50 rounded-xl text-xs font-bold transition-all shadow-xs"
               >
                 <Palmtree size={14} />
@@ -479,6 +479,16 @@ export default function MozBookTrips() {
                 <Car size={13} />
                 <span>Transport & Transfers</span>
               </button>
+              <button
+                type="button"
+                onClick={() => setSelectedType('dmc_package')}
+                className={`px-3 py-1.5 rounded-lg transition-colors cursor-pointer flex items-center gap-1 ${
+                  selectedType === 'dmc_package' ? 'bg-[#009A60] text-white shadow-2xs' : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                <Globe size={13} />
+                <span>Travel Packages</span>
+              </button>
             </div>
           </div>
 
@@ -583,7 +593,7 @@ export default function MozBookTrips() {
             </p>
           </div>
           <Link
-            to="/host/activities"
+            to="/partner/dashboard?tab=trips"
             className="px-5 py-2.5 bg-white text-[#009A60] hover:bg-emerald-50 text-xs font-bold rounded-xl transition-all shadow-xs shrink-0 text-center"
           >
             Host Activities & Trips →
@@ -635,7 +645,7 @@ export default function MozBookTrips() {
                           <span>{activity.city}</span>
                         </span>
                         <span className="bg-white/90 backdrop-blur-md text-gray-900 px-2.5 py-1 rounded-full text-[11px] font-bold uppercase tracking-wider">
-                          {activity.type === 'trip' ? 'Trip / Tour' : activity.type === 'transport' ? 'Transport & Transfer' : 'Activity'}
+                          {activity.type === 'trip' ? 'Trip / Tour' : activity.type === 'transport' ? 'Transport & Transfer' : activity.type === 'dmc_package' ? 'Travel Package' : 'Activity'}
                         </span>
                       </div>
 
@@ -748,14 +758,24 @@ export default function MozBookTrips() {
                       </div>
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={() => handleOpenBooking(activity)}
-                      className="px-5 py-2.5 bg-[#009A60] hover:bg-[#008250] text-white rounded-xl text-xs font-bold shadow-xs hover:shadow-md transition-all flex items-center gap-1.5 cursor-pointer"
-                    >
-                      <span>Book Now</span>
-                      <ArrowRight size={14} />
-                    </button>
+                    {activity.type === 'dmc_package' ? (
+                      <Link
+                        to={`/packages/${activity.id}`}
+                        className="px-5 py-2.5 bg-[#009A60] hover:bg-[#008250] text-white rounded-xl text-xs font-bold shadow-xs hover:shadow-md transition-all flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <span>View Itinerary</span>
+                        <ArrowRight size={14} />
+                      </Link>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => handleOpenBooking(activity)}
+                        className="px-5 py-2.5 bg-[#009A60] hover:bg-[#008250] text-white rounded-xl text-xs font-bold shadow-xs hover:shadow-md transition-all flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <span>Book Now</span>
+                        <ArrowRight size={14} />
+                      </button>
+                    )}
                   </div>
                 </div>
               );

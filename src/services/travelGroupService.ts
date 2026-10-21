@@ -1437,3 +1437,21 @@ export const travelGroupService = {
     return items.sort((a, b) => a.date.localeCompare(b.date));
   }
 };
+
+/**
+ * Platform-Wide Session Isolation:
+ * Wipes travel companion groups, members, invites, and group bookings from local storage.
+ */
+export function clearTravelGroupCache(): void {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem(STORAGE_GROUPS_KEY);
+      localStorage.removeItem(STORAGE_MEMBERS_KEY);
+      localStorage.removeItem(STORAGE_INVITATIONS_KEY);
+      localStorage.removeItem(STORAGE_GROUP_BOOKINGS_KEY);
+    }
+  } catch (e) {
+    console.warn('[travelGroupService] Error clearing travel group cache:', e);
+  }
+}
+

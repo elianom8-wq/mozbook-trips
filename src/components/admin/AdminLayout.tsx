@@ -176,7 +176,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
           <div className="flex items-center gap-3">
             <Link to="/" className="flex items-center gap-2 hover:opacity-90 transition-opacity">
-              <MozBookLogo className="h-6 w-auto" />
+              <MozBookLogo variant="compact" size="sm" theme="dark" preferVector />
             </Link>
             <div className="h-5 w-px bg-slate-800 hidden sm:block" />
             <div className="flex items-center gap-2">

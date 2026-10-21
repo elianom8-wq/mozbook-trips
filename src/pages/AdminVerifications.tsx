@@ -77,8 +77,10 @@ export default function AdminVerifications() {
 
   const handleUpdateStatus = async (verif: HostVerification, newStatus: VerificationStatus) => {
     setActionLoading(true);
-    const success = await updateVerificationStatus(verif.id!, verif.userId, newStatus, adminNotes);
-    if (success) {
+    const result = await updateVerificationStatus(verif.id!, verif.userId, newStatus, adminNotes);
+    const isSuccess = typeof result === 'boolean' ? result : result.success;
+
+    if (isSuccess) {
       // Record administrative audit log
       if (auth.currentUser) {
         adminService.logAdminAction(
@@ -92,11 +94,20 @@ export default function AdminVerifications() {
         );
       }
 
-      setToastMessage(`Host ${verif.hostName} is now marked as ${newStatus.toUpperCase()}`);
+      const syncResult = typeof result === 'object' ? result.listingSyncResult : undefined;
+      const syncInfo = syncResult && syncResult.eligibleListingsUpdated > 0
+        ? ` (${syncResult.eligibleListingsUpdated} listings synchronized)`
+        : '';
+
+      setToastMessage(`Host ${verif.hostName} is now marked as ${newStatus.toUpperCase()}${syncInfo}`);
       setTimeout(() => setToastMessage(null), 3500);
       setSelectedVerif(null);
       setAdminNotes('');
       await loadData();
+    } else {
+      const errMsg = typeof result === 'object' && result.error ? result.error : 'Failed to update verification status';
+      setToastMessage(errMsg);
+      setTimeout(() => setToastMessage(null), 4000);
     }
     setActionLoading(false);
   };

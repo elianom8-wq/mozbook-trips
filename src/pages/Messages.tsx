@@ -50,6 +50,8 @@ export default function Messages() {
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const handledDeepLinkRef = useRef<string | null>(null);
+  const isHandlingDeepLinkRef = useRef<boolean>(false);
 
   // Deep-link query parameters
   const queryConvId = searchParams.get('conversationId');
@@ -59,6 +61,12 @@ export default function Messages() {
   const queryHostName = searchParams.get('hostName');
   const queryBookingId = searchParams.get('bookingId');
   const queryBookingRef = searchParams.get('bookingRef');
+
+  // Keep ref to latest conversations for stable inspection without re-triggering deep link effect
+  const conversationsRef = useRef<Conversation[]>(conversations);
+  useEffect(() => {
+    conversationsRef.current = conversations;
+  }, [conversations]);
 
   // 1. Subscribe to conversations
   useEffect(() => {
@@ -90,48 +98,76 @@ export default function Messages() {
         return;
       }
 
-      let resolvedHostId = queryHostId;
-      let resolvedHostName = queryHostName || 'MozBook Host';
-      let resolvedListingTitle = queryListingTitle || 'MozBook Reservation';
-      let resolvedBookingRef = queryBookingRef;
-      let resolvedListingId = queryListingId;
+      // If no host ID in parameters, nothing to deep link
+      if (!queryHostId) return;
 
-      // If bookingId is provided, look up authoritative booking record to verify participants
-      if (queryBookingId) {
-        // If an existing conversation already matches this booking, open it
-        const matchedByBooking = conversations.find((c) => c.bookingId === queryBookingId);
-        if (matchedByBooking) {
-          setSelectedConversationId(matchedByBooking.id);
-          return;
-        }
-
-        try {
-          const staySnap = await getDoc(doc(db, 'bookings', queryBookingId));
-          if (staySnap.exists()) {
-            const data = staySnap.data();
-            resolvedHostId = data.hostId;
-            resolvedHostName = data.hostName || 'Property Host';
-            resolvedListingTitle = data.listingTitle || resolvedListingTitle;
-            resolvedBookingRef = data.bookingRef || resolvedBookingRef;
-            resolvedListingId = data.listingId || resolvedListingId;
-          } else {
-            const actSnap = await getDoc(doc(db, 'activity_bookings', queryBookingId));
-            if (actSnap.exists()) {
-              const data = actSnap.data();
-              resolvedHostId = data.hostId;
-              resolvedHostName = data.hostName || 'Activity Operator';
-              resolvedListingTitle = data.activityTitle || resolvedListingTitle;
-              resolvedBookingRef = data.bookingRef || resolvedBookingRef;
-              resolvedListingId = data.activityId || resolvedListingId;
-            }
-          }
-        } catch (fetchErr) {
-          console.warn('[Messages] Authoritative booking lookup note:', fetchErr);
-        }
+      const deepLinkKey = `${user.uid}_${queryHostId}_${queryListingId || ''}_${queryBookingId || ''}`;
+      if (handledDeepLinkRef.current === deepLinkKey || isHandlingDeepLinkRef.current) {
+        return;
       }
 
-      if (resolvedHostId && resolvedHostId !== user.uid) {
-        try {
+      isHandlingDeepLinkRef.current = true;
+
+      try {
+        let resolvedHostId = queryHostId;
+        let resolvedHostName = queryHostName || 'MozBook Host';
+        let resolvedListingTitle = queryListingTitle || 'MozBook Reservation';
+        let resolvedBookingRef = queryBookingRef;
+        let resolvedListingId = queryListingId;
+
+        // If bookingId is provided, look up authoritative booking record to verify participants
+        if (queryBookingId) {
+          // If an existing conversation already matches this booking, open it
+          const matchedByBooking = conversationsRef.current.find((c) => c.bookingId === queryBookingId);
+          if (matchedByBooking) {
+            handledDeepLinkRef.current = deepLinkKey;
+            setSelectedConversationId(matchedByBooking.id);
+            setSearchParams({ conversationId: matchedByBooking.id }, { replace: true });
+            return;
+          }
+
+          try {
+            const staySnap = await getDoc(doc(db, 'bookings', queryBookingId));
+            if (staySnap.exists()) {
+              const data = staySnap.data();
+              resolvedHostId = data.hostId;
+              resolvedHostName = data.hostName || 'Property Host';
+              resolvedListingTitle = data.listingTitle || resolvedListingTitle;
+              resolvedBookingRef = data.bookingRef || resolvedBookingRef;
+              resolvedListingId = data.listingId || resolvedListingId;
+            } else {
+              const actSnap = await getDoc(doc(db, 'activity_bookings', queryBookingId));
+              if (actSnap.exists()) {
+                const data = actSnap.data();
+                resolvedHostId = data.hostId;
+                resolvedHostName = data.hostName || 'Activity Operator';
+                resolvedListingTitle = data.activityTitle || resolvedListingTitle;
+                resolvedBookingRef = data.bookingRef || resolvedBookingRef;
+                resolvedListingId = data.activityId || resolvedListingId;
+              }
+            }
+          } catch (fetchErr) {
+            console.warn('[Messages] Authoritative booking lookup note:', fetchErr);
+          }
+        }
+
+        // Check if an existing conversation in state matches this host and listing/booking
+        if (resolvedHostId && resolvedHostId !== user.uid) {
+          const matchedExisting = conversationsRef.current.find((c) => {
+            const hasBoth = c.participantIds.includes(user.uid) && c.participantIds.includes(resolvedHostId!);
+            if (!hasBoth) return false;
+            if (queryBookingId) return c.bookingId === queryBookingId;
+            if (resolvedListingId) return c.listingId === resolvedListingId;
+            return true;
+          });
+
+          if (matchedExisting) {
+            handledDeepLinkRef.current = deepLinkKey;
+            setSelectedConversationId(matchedExisting.id);
+            setSearchParams({ conversationId: matchedExisting.id }, { replace: true });
+            return;
+          }
+
           const convId = await getOrCreateConversation({
             currentUserId: user.uid,
             currentUser: {
@@ -152,15 +188,19 @@ export default function Messages() {
             bookingRef: resolvedBookingRef || undefined
           });
 
+          handledDeepLinkRef.current = deepLinkKey;
           setSelectedConversationId(convId);
-        } catch (err) {
-          console.error('[Messages] Deep link conversation creation error:', err);
+          setSearchParams({ conversationId: convId }, { replace: true });
         }
+      } catch (err) {
+        console.error('[Messages] Deep link conversation creation error:', err);
+      } finally {
+        isHandlingDeepLinkRef.current = false;
       }
     }
 
     handleDeepLink();
-  }, [user, queryConvId, queryHostId, queryListingId, queryListingTitle, queryHostName, queryBookingId, queryBookingRef, profile, conversations]);
+  }, [user, queryConvId, queryHostId, queryListingId, queryListingTitle, queryHostName, queryBookingId, queryBookingRef, profile, setSearchParams]);
 
   // Set default selected conversation on desktop if none selected
   useEffect(() => {

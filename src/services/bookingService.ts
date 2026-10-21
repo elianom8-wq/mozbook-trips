@@ -284,3 +284,18 @@ export async function handleStayOperatorInventoryFailure(
   };
 }
 
+/**
+ * Platform-Wide Session Isolation:
+ * Wipes local stay bookings cache from storage.
+ */
+export function clearLocalStayBookingsCache(): void {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem(STORAGE_KEY_STAY_BOOKINGS);
+    }
+  } catch (e) {
+    console.warn('[bookingService] Error clearing local stay bookings cache:', e);
+  }
+}
+
+

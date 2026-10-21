@@ -186,6 +186,118 @@ function saveLocalMessages(conversationId: string, messages: Message[]): void {
 }
 
 /**
+ * Safely consolidates duplicate conversation records for display.
+ * Rules:
+ * 1. Groups conversations by logical participants and context: (participantIds, listingId/bookingId).
+ * 2. If a group has multiple conversations:
+ *    - If redundant duplicates are unpopulated initial stubs (e.g. lastMessageText is the default
+ *      "Inquiry regarding..." template or "Conversation started") and another conversation in the group
+ *      has real user messages, collapse the stubs into the active conversation so the inbox doesn't show duplicates.
+ *    - Reconciles unread counts across all records in the group so no unread messages are lost.
+ *    - If multiple conversations in the group contain DIFFERENT real user messages, PRESERVE BOTH so message
+ *      history is never hidden or made inaccessible.
+ * 3. Sorts conversations by latest activity (updatedAt or lastMessageTimestamp).
+ */
+export function consolidateConversationsForDisplay(
+  conversations: Conversation[],
+  currentUserId: string
+): Conversation[] {
+  if (!conversations || conversations.length <= 1) return conversations;
+
+  // Group by logical relationship
+  const groups = new Map<string, Conversation[]>();
+  for (const c of conversations) {
+    const otherId = (c.participantIds || []).find((id) => id !== currentUserId) || 'other';
+    const contextKey = c.bookingId 
+      ? `b_${c.bookingId}` 
+      : (c.listingId ? `l_${c.listingId}` : 'general');
+    const groupKey = `${[currentUserId, otherId].sort().join('_')}__${contextKey}`;
+
+    if (!groups.has(groupKey)) {
+      groups.set(groupKey, []);
+    }
+    groups.get(groupKey)!.push(c);
+  }
+
+  const result: Conversation[] = [];
+
+  for (const group of groups.values()) {
+    if (group.length === 1) {
+      result.push(group[0]);
+      continue;
+    }
+
+    // Sort group conversations by latest activity descending
+    group.sort((a, b) => {
+      const tA = new Date(a.updatedAt || a.lastMessageTimestamp || 0).getTime();
+      const tB = new Date(b.updatedAt || b.lastMessageTimestamp || 0).getTime();
+      return tB - tA;
+    });
+
+    // Check if any in the group are default stubs vs active threads with real custom messages
+    const isDefaultStub = (c: Conversation) => {
+      const text = c.lastMessageText || '';
+      return text.startsWith('Inquiry regarding') || text === 'Conversation started' || text.trim() === '';
+    };
+
+    const activeThreads = group.filter((c) => !isDefaultStub(c));
+    const stubs = group.filter(isDefaultStub);
+
+    if (activeThreads.length === 0) {
+      // All are stubs with default text: keep the most recent one, merge unread counts
+      const primary = { ...group[0] };
+      const mergedUnread = { ...(primary.unreadCount || {}) };
+      for (let i = 1; i < group.length; i++) {
+        const otherUnread = group[i].unreadCount || {};
+        for (const [uid, count] of Object.entries(otherUnread)) {
+          mergedUnread[uid] = (mergedUnread[uid] || 0) + (count as number);
+        }
+      }
+      primary.unreadCount = mergedUnread;
+      result.push(primary);
+    } else if (activeThreads.length === 1) {
+      // Exactly 1 active thread and some redundant stubs:
+      // Collapse stubs into the active thread!
+      const primary = { ...activeThreads[0] };
+      const mergedUnread = { ...(primary.unreadCount || {}) };
+      for (const stub of stubs) {
+        const otherUnread = stub.unreadCount || {};
+        for (const [uid, count] of Object.entries(otherUnread)) {
+          mergedUnread[uid] = (mergedUnread[uid] || 0) + (count as number);
+        }
+      }
+      primary.unreadCount = mergedUnread;
+      result.push(primary);
+    } else {
+      // Multiple active threads have different custom messages!
+      // Preserve all active threads so message history remains accessible,
+      // and collapse any empty stubs into the latest active thread.
+      const primary = { ...activeThreads[0] };
+      const mergedUnread = { ...(primary.unreadCount || {}) };
+      for (const stub of stubs) {
+        const otherUnread = stub.unreadCount || {};
+        for (const [uid, count] of Object.entries(otherUnread)) {
+          mergedUnread[uid] = (mergedUnread[uid] || 0) + (count as number);
+        }
+      }
+      primary.unreadCount = mergedUnread;
+      result.push(primary);
+
+      for (let i = 1; i < activeThreads.length; i++) {
+        result.push(activeThreads[i]);
+      }
+    }
+  }
+
+  // Final sort by latest activity
+  return result.sort((a, b) => {
+    const tA = new Date(a.updatedAt || a.lastMessageTimestamp || 0).getTime();
+    const tB = new Date(b.updatedAt || b.lastMessageTimestamp || 0).getTime();
+    return tB - tA;
+  });
+}
+
+/**
  * Subscribe in real time to all conversations involving the specified user
  */
 export function subscribeToUserConversations(
@@ -203,7 +315,7 @@ export function subscribeToUserConversations(
 
   // Immediate local cache emission for fast render
   let cached = getLocalConversations(userId);
-  onUpdate(cached);
+  onUpdate(consolidateConversationsForDisplay(cached, userId));
 
   const initFirestoreSubscription = (authUid: string) => {
     if (!isSubscribed) return;
@@ -238,27 +350,26 @@ export function subscribeToUserConversations(
           cached.forEach((c) => combinedMap.set(c.id, c));
           remoteList.forEach((c) => combinedMap.set(c.id, c));
 
-          const sorted = Array.from(combinedMap.values()).sort((a, b) => {
-            const tA = new Date(a.updatedAt || a.lastMessageTimestamp || 0).getTime();
-            const tB = new Date(b.updatedAt || b.lastMessageTimestamp || 0).getTime();
-            return tB - tA;
-          });
+          const rawList = Array.from(combinedMap.values());
+          const consolidated = consolidateConversationsForDisplay(rawList, authUid);
 
-          saveLocalConversations(authUid, sorted);
-          onUpdate(sorted);
+          saveLocalConversations(authUid, consolidated);
+          onUpdate(consolidated);
         },
         (error) => {
           logMessagingDiagnostic('subscribeToUserConversations.onSnapshot', authUid, error);
           if (error?.code !== 'permission-denied') {
             console.warn('[messagingService] Firestore conversation subscription fallback to local cache:', error);
           }
-          onUpdate(cached);
+          const consolidatedCached = consolidateConversationsForDisplay(cached, authUid);
+          onUpdate(consolidatedCached);
         }
       );
     } catch (err) {
       logMessagingDiagnostic('subscribeToUserConversations.setup', authUid, err);
       console.warn('[messagingService] Failed to establish Firestore listener:', err);
-      onUpdate(cached);
+      const consolidatedCached = consolidateConversationsForDisplay(cached, authUid);
+      onUpdate(consolidatedCached);
     }
   };
 
@@ -581,11 +692,36 @@ export async function markConversationAsRead(
   }
 }
 
+const inFlightConversationPromises = new Map<string, Promise<string>>();
+
 /**
  * Find existing conversation between two users (optionally matching listing or booking),
  * or create a new conversation and return its ID.
+ * 
+ * Idempotent: Concurrent or repeated calls for the same guest, host, and listing/booking
+ * return the identical conversation without creating duplicate records.
  */
 export async function getOrCreateConversation(
+  params: CreateConversationParams
+): Promise<string> {
+  const { currentUserId, otherUserId, listingId, bookingId } = params;
+  const flightKey = `${currentUserId}_${otherUserId}_${listingId || 'general'}_${bookingId || 'none'}`;
+
+  const existingFlight = inFlightConversationPromises.get(flightKey);
+  if (existingFlight) {
+    return existingFlight;
+  }
+
+  const promise = executeGetOrCreateConversation(params);
+  inFlightConversationPromises.set(flightKey, promise);
+  try {
+    return await promise;
+  } finally {
+    inFlightConversationPromises.delete(flightKey);
+  }
+}
+
+async function executeGetOrCreateConversation(
   params: CreateConversationParams
 ): Promise<string> {
   const {
@@ -605,13 +741,25 @@ export async function getOrCreateConversation(
     initialMessage
   } = params;
 
-  // 1. Check local cache first — reuse existing conversation with this partner
+  // 1. Check local cache first — reuse existing conversation with this partner and context
   const localList = getLocalConversations(currentUserId);
-  const existingLocal = localList.find((c) => {
+  let existingLocal = localList.find((c) => {
     const hasBothUsers =
       c.participantIds.includes(currentUserId) && c.participantIds.includes(otherUserId);
-    return hasBothUsers && isLegitimateConversation(c);
+    if (!hasBothUsers || !isLegitimateConversation(c)) return false;
+    if (bookingId && c.bookingId === bookingId) return true;
+    if (listingId && c.listingId === listingId) return true;
+    return false;
   });
+
+  // If no exact context match in cache, fallback to general conversation or historical conversation between these users
+  if (!existingLocal) {
+    existingLocal = localList.find((c) => {
+      const hasBothUsers =
+        c.participantIds.includes(currentUserId) && c.participantIds.includes(otherUserId);
+      return hasBothUsers && isLegitimateConversation(c);
+    });
+  }
 
   if (existingLocal) {
     let modified = false;
@@ -652,35 +800,28 @@ export async function getOrCreateConversation(
     return existingLocal.id;
   }
 
-  // 2. Query Firestore — find existing conversation between the two participants
-  try {
-    const convRef = collection(db, 'conversations');
-    const q = query(
-      convRef,
-      where('participantIds', 'array-contains', currentUserId),
-      limit(20)
-    );
-    const snap = await getDocs(q);
+  // 2. Deterministic Canonical ID Check
+  const cleanPartA = currentUserId.replace(/[^a-zA-Z0-9_-]/g, '');
+  const cleanPartB = otherUserId.replace(/[^a-zA-Z0-9_-]/g, '');
+  const sortedParticipants = [cleanPartA, cleanPartB].sort().join('_');
+  const contextKey = listingId
+    ? `l_${listingId.replace(/[^a-zA-Z0-9_-]/g, '')}`
+    : (bookingId ? `b_${bookingId.replace(/[^a-zA-Z0-9_-]/g, '')}` : 'general');
+  const canonicalConvId = `conv_${sortedParticipants}_${contextKey}`;
 
-    for (const docSnap of snap.docs) {
-      const data = docSnap.data() as Conversation;
-      if (data.participantIds?.includes(otherUserId) && isLegitimateConversation(data)) {
-        if (bookingId && data.bookingId !== bookingId) {
-          try {
-            await updateDoc(docSnap.ref, cleanFirestorePayload({
-              bookingId,
-              bookingRef: bookingRef || data.bookingRef,
-              listingTitle: listingTitle || data.listingTitle,
-              listingId: listingId || data.listingId,
-              updatedAt: new Date().toISOString()
-            }));
-          } catch {
-            // ignore
-          }
+  try {
+    const canonicalSnap = await getDoc(doc(db, 'conversations', canonicalConvId));
+    if (canonicalSnap.exists()) {
+      const data = canonicalSnap.data() as Conversation;
+      if (isLegitimateConversation(data)) {
+        const userConvs = getLocalConversations(currentUserId);
+        if (!userConvs.some((c) => c.id === canonicalConvId)) {
+          userConvs.unshift({ ...data, id: canonicalConvId });
+          saveLocalConversations(currentUserId, userConvs);
         }
         if (initialMessage && initialMessage.trim()) {
           await sendMessage(
-            docSnap.id,
+            canonicalConvId,
             {
               uid: currentUserId,
               displayName: currentUser.displayName,
@@ -691,20 +832,90 @@ export async function getOrCreateConversation(
             initialMessage
           );
         }
-        return docSnap.id;
+        return canonicalConvId;
       }
     }
   } catch (err: any) {
+    logMessagingDiagnostic('getOrCreateConversation.canonicalCheck', currentUserId, err);
+  }
+
+  // 3. Query Firestore — find existing conversation between the two participants
+  try {
+    const convRef = collection(db, 'conversations');
+    const q = query(
+      convRef,
+      where('participantIds', 'array-contains', currentUserId),
+      limit(30)
+    );
+    const snap = await getDocs(q);
+
+    let matchedDoc: any = null;
+    for (const docSnap of snap.docs) {
+      const data = docSnap.data() as Conversation;
+      if (data.participantIds?.includes(otherUserId) && isLegitimateConversation(data)) {
+        if (bookingId && data.bookingId === bookingId) {
+          matchedDoc = docSnap;
+          break;
+        }
+        if (listingId && data.listingId === listingId) {
+          matchedDoc = docSnap;
+          break;
+        }
+        if (!matchedDoc && !bookingId && !listingId) {
+          matchedDoc = docSnap;
+        }
+      }
+    }
+
+    if (matchedDoc) {
+      const data = matchedDoc.data() as Conversation;
+      if (bookingId && data.bookingId !== bookingId) {
+        try {
+          await updateDoc(matchedDoc.ref, cleanFirestorePayload({
+            bookingId,
+            bookingRef: bookingRef || data.bookingRef,
+            listingTitle: listingTitle || data.listingTitle,
+            listingId: listingId || data.listingId,
+            updatedAt: new Date().toISOString()
+          }));
+        } catch {
+          // ignore
+        }
+      }
+      const userConvs = getLocalConversations(currentUserId);
+      if (!userConvs.some((c) => c.id === matchedDoc.id)) {
+        userConvs.unshift({ ...data, id: matchedDoc.id });
+        saveLocalConversations(currentUserId, userConvs);
+      }
+      if (initialMessage && initialMessage.trim()) {
+        await sendMessage(
+          matchedDoc.id,
+          {
+            uid: currentUserId,
+            displayName: currentUser.displayName,
+            email: currentUser.email,
+            photoURL: currentUser.photoURL,
+            role: currentUser.role || 'guest'
+          },
+          initialMessage
+        );
+      }
+      return matchedDoc.id;
+    }
+  } catch (err: any) {
     logMessagingDiagnostic('getOrCreateConversation.lookup', currentUserId, err);
-    if (err?.code !== 'permission-denied') {
-      console.warn('[messagingService] Firestore conversation lookup error:', err);
+    // Explicit error handling: do not create duplicate records on transient network error
+    if (err?.code === 'unavailable' || err?.code === 'deadline-exceeded') {
+      const fallback = localList.find((c) => c.participantIds.includes(currentUserId) && c.participantIds.includes(otherUserId));
+      if (fallback) return fallback.id;
+      throw new Error(`Unable to reach messaging server (${err.code}). Please check your connection.`);
     }
   }
 
-  // 3. Create new conversation
+  // 4. Create new conversation under deterministic canonical ID
   const now = new Date();
   const timestampIso = now.toISOString();
-  const convId = `conv_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+  const convId = canonicalConvId;
 
   const isCurrentGuest = (currentUser.role || 'guest') !== 'host';
   const guestId = isCurrentGuest ? currentUserId : otherUserId;
@@ -769,11 +980,16 @@ export async function getOrCreateConversation(
 
   // Save to local cache
   const userConvs = getLocalConversations(currentUserId);
-  userConvs.unshift(newConversation);
+  const existingIdx = userConvs.findIndex((c) => c.id === convId);
+  if (existingIdx !== -1) {
+    userConvs[existingIdx] = newConversation;
+  } else {
+    userConvs.unshift(newConversation);
+  }
   saveLocalConversations(currentUserId, userConvs);
 
   const initialMsg: Message = {
-    id: `msg_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
+    id: `msg_${now.getTime()}_${Math.random().toString(36).substring(2, 8)}`,
     conversationId: convId,
     senderId: currentUserId,
     senderName: currentUser.displayName,
@@ -796,3 +1012,25 @@ export async function getOrCreateConversation(
 
   return convId;
 }
+
+/**
+ * Platform-Wide Session Isolation:
+ * Wipes all cached conversation lists and message histories from localStorage.
+ */
+export function clearAllMessagingCache(): void {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      const keysToRemove: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && (k.startsWith(STORAGE_KEY_PREFIX_CONV) || k.startsWith(STORAGE_KEY_PREFIX_MSGS))) {
+          keysToRemove.push(k);
+        }
+      }
+      keysToRemove.forEach((k) => localStorage.removeItem(k));
+    }
+  } catch (e) {
+    console.warn('[messagingService] Error clearing messaging caches:', e);
+  }
+}
+

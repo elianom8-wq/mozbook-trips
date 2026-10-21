@@ -45,6 +45,11 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { 
+  saveUserScopedDraft, 
+  getUserScopedDraft, 
+  clearUserScopedDraft 
+} from '../services/authSessionManager';
+import { 
   ResidenceType, 
   createListing, 
   NearbyPlace,
@@ -237,6 +242,269 @@ export default function CreateListing() {
   // Submission State
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+
+  // User-Scoped Listing Draft Management (Fix A & Post-Discard Resilience)
+  const STAY_LISTING_DRAFT_KEY = 'stay_listing_draft';
+  const [restoredDraftNotice, setRestoredDraftNotice] = useState<{
+    active: boolean;
+    title?: string;
+    savedAt?: string;
+  } | null>(null);
+  const draftReadyRef = useRef<boolean>(false);
+  const hasLoadedDraftRef = useRef<string | null>(null);
+  const isDiscardedRef = useRef<boolean>(false);
+  const hasSubmittedRef = useRef<boolean>(false);
+  const hasUserModifiedRef = useRef<boolean>(false);
+  const latestDraftPayloadRef = useRef<any>(null);
+
+  // Helper to construct serializable draft payload (strictly omitting any identity verification files)
+  const getDraftPayload = () => ({
+    residenceType,
+    canonicalType,
+    selectedOperatingModels,
+    selectedSettings,
+    classificationStatus,
+    title,
+    description,
+    price,
+    currency,
+    minNights,
+    specialOffer,
+    accommodations,
+    isMultiUnit,
+    availableFrom,
+    availableTo,
+    coordinates,
+    city,
+    province,
+    address,
+    selectedAmenities,
+    photos,
+    nearbyPlaces,
+    savedAt: new Date().toISOString()
+  });
+
+  // Always keep latest draft payload ref in sync with current state
+  useEffect(() => {
+    latestDraftPayloadRef.current = getDraftPayload();
+  });
+
+  const saveDraftImmediately = () => {
+    if (
+      !user?.uid ||
+      !draftReadyRef.current ||
+      isSubmitting ||
+      hasSubmittedRef.current ||
+      isDiscardedRef.current ||
+      !hasUserModifiedRef.current
+    ) {
+      return;
+    }
+
+    const payload = latestDraftPayloadRef.current || getDraftPayload();
+    const hasMeaningfulContent = Boolean(
+      payload.title?.trim() || 
+      payload.description?.trim() || 
+      payload.price !== 2000 || 
+      (payload.accommodations && payload.accommodations.length > 0) ||
+      payload.isMultiUnit ||
+      (payload.photos && payload.photos.length !== 3) ||
+      payload.city !== 'Maputo' ||
+      (payload.selectedAmenities && payload.selectedAmenities.length !== 5)
+    );
+
+    if (hasMeaningfulContent) {
+      saveUserScopedDraft(user.uid, STAY_LISTING_DRAFT_KEY, payload);
+    }
+  };
+
+  // Restore user-scoped draft when user is authenticated
+  useEffect(() => {
+    if (!user?.uid) {
+      draftReadyRef.current = false;
+      hasLoadedDraftRef.current = null;
+      setRestoredDraftNotice(null);
+      return;
+    }
+
+    if (hasLoadedDraftRef.current === user.uid) return;
+    hasLoadedDraftRef.current = user.uid;
+
+    if (isDiscardedRef.current) return;
+
+    const existing = getUserScopedDraft<any>(user.uid, STAY_LISTING_DRAFT_KEY);
+    if (existing) {
+      if (existing.residenceType) setResidenceType(existing.residenceType);
+      if (existing.canonicalType) setCanonicalType(existing.canonicalType);
+      if (existing.selectedOperatingModels) setSelectedOperatingModels(existing.selectedOperatingModels);
+      if (existing.selectedSettings) setSelectedSettings(existing.selectedSettings);
+      if (existing.classificationStatus) setClassificationStatus(existing.classificationStatus);
+      if (typeof existing.title === 'string') setTitle(existing.title);
+      if (typeof existing.description === 'string') setDescription(existing.description);
+      if (typeof existing.price === 'number') setPrice(existing.price);
+      if (existing.currency) setCurrency(existing.currency);
+      if (typeof existing.minNights === 'number') setMinNights(existing.minNights);
+      if (existing.specialOffer !== undefined) setSpecialOffer(existing.specialOffer);
+      if (Array.isArray(existing.accommodations)) setAccommodations(existing.accommodations);
+      if (typeof existing.isMultiUnit === 'boolean') setIsMultiUnit(existing.isMultiUnit);
+      if (existing.availableFrom) setAvailableFrom(existing.availableFrom);
+      if (existing.availableTo) setAvailableTo(existing.availableTo);
+      if (existing.coordinates) setCoordinates(existing.coordinates);
+      if (existing.city) setCity(existing.city);
+      if (existing.province) setProvince(existing.province);
+      if (existing.address) setAddress(existing.address);
+      if (Array.isArray(existing.selectedAmenities)) setSelectedAmenities(existing.selectedAmenities);
+      if (Array.isArray(existing.photos) && existing.photos.length > 0) setPhotos(existing.photos);
+      if (Array.isArray(existing.nearbyPlaces) && existing.nearbyPlaces.length > 0) setNearbyPlaces(existing.nearbyPlaces);
+
+      setRestoredDraftNotice({
+        active: true,
+        title: existing.title || '',
+        savedAt: existing.savedAt
+      });
+      // Restored draft is not yet modified in this user session
+      hasUserModifiedRef.current = false;
+    }
+
+    draftReadyRef.current = true;
+  }, [user?.uid]);
+
+  // Debounced autosave effect
+  useEffect(() => {
+    if (
+      !user?.uid || 
+      !draftReadyRef.current || 
+      isSubmitting || 
+      hasSubmittedRef.current || 
+      isDiscardedRef.current
+    ) {
+      return;
+    }
+
+    const hasMeaningfulContent = Boolean(
+      title.trim() || 
+      description.trim() || 
+      price !== 2000 || 
+      accommodations.length > 0 ||
+      isMultiUnit ||
+      photos.length !== 3 ||
+      city !== 'Maputo' ||
+      selectedAmenities.length !== 5
+    );
+
+    if (!hasMeaningfulContent) return;
+
+    // User has entered deliberate content
+    hasUserModifiedRef.current = true;
+
+    const timer = setTimeout(() => {
+      if (
+        !isDiscardedRef.current && 
+        !hasSubmittedRef.current && 
+        !isSubmitting && 
+        draftReadyRef.current
+      ) {
+        saveUserScopedDraft(user.uid, STAY_LISTING_DRAFT_KEY, getDraftPayload());
+      }
+    }, 750);
+
+    return () => clearTimeout(timer);
+  }, [
+    user?.uid,
+    residenceType,
+    canonicalType,
+    selectedOperatingModels,
+    selectedSettings,
+    classificationStatus,
+    title,
+    description,
+    price,
+    currency,
+    minNights,
+    specialOffer,
+    accommodations,
+    isMultiUnit,
+    availableFrom,
+    availableTo,
+    coordinates,
+    city,
+    province,
+    address,
+    selectedAmenities,
+    photos,
+    nearbyPlaces,
+    isSubmitting
+  ]);
+
+  // Flush save on window unload / navigation away (single mount listener avoids stale state cleanup execution)
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      saveDraftImmediately();
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      // Strictly saves on true unmount (navigating away) only if user modified and not discarded/submitted
+      saveDraftImmediately();
+    };
+  }, []);
+
+  // Explicit discard draft handler
+  const handleDiscardDraft = () => {
+    // 1. Immediately flag as discarded to block all pending and subsequent autosaves
+    isDiscardedRef.current = true;
+    hasUserModifiedRef.current = false;
+    draftReadyRef.current = false;
+    latestDraftPayloadRef.current = null;
+
+    // 2. Clear persisted draft from storage
+    if (user?.uid) {
+      clearUserScopedDraft(user.uid, STAY_LISTING_DRAFT_KEY);
+    }
+
+    // 3. Dismiss restored notice banner immediately
+    setRestoredDraftNotice(null);
+
+    // 4. Reset form state to pristine default values
+    setTitle('');
+    setDescription('');
+    setPrice(2000);
+    setCurrency('MZN');
+    setMinNights(2);
+    setSpecialOffer(null);
+    setAccommodations([]);
+    setIsMultiUnit(false);
+    setResidenceType('beachfront residence');
+    setCanonicalType('BEACH_HOUSE');
+    setSelectedOperatingModels(['SELF_CATERING']);
+    setSelectedSettings(['BEACHFRONT', 'COASTAL']);
+    setClassificationStatus('VALID_MATCH');
+    setCity('Maputo');
+    setProvince('Maputo Cidade');
+    setAddress('Avenida Marginal Beachfront, Polana');
+    setCoordinates({ lat: -25.9692, lng: 32.5732 });
+    setSelectedAmenities(['wifi', 'ac', 'pool', 'kitchen', 'security']);
+    setPhotos([
+      {
+        url: 'https://images.unsplash.com/photo-1499793983690-e29da59ef1c2?auto=format&fit=crop&w=1200&q=80',
+        label: 'Ocean View Balcony'
+      },
+      {
+        url: 'https://images.unsplash.com/photo-1512917774080-9991f1c4c750?auto=format&fit=crop&w=800&q=80',
+        label: 'Swimming Pool'
+      },
+      {
+        url: 'https://images.unsplash.com/photo-1502672260266-1c1ef2d93688?auto=format&fit=crop&w=800&q=80',
+        label: 'Lounge'
+      }
+    ]);
+
+    // 5. After reset state finishes settling, re-enable draft readiness for future deliberate editing
+    setTimeout(() => {
+      draftReadyRef.current = true;
+      isDiscardedRef.current = false;
+    }, 200);
+  };
 
   useEffect(() => {
     if (user) {
@@ -494,6 +762,15 @@ export default function CreateListing() {
 
       const newId = await createListing(listingData);
       if (newId) {
+        hasSubmittedRef.current = true;
+        isDiscardedRef.current = false;
+        hasUserModifiedRef.current = false;
+        draftReadyRef.current = false;
+        latestDraftPayloadRef.current = null;
+        if (user?.uid) {
+          clearUserScopedDraft(user.uid, STAY_LISTING_DRAFT_KEY);
+        }
+        setRestoredDraftNotice(null);
         if (specialOffer && specialOffer.enabled) {
           try {
             await saveListingSpecialOffer(newId, specialOffer);
@@ -543,6 +820,7 @@ export default function CreateListing() {
             {/* Host Verification Badge / Link */}
             <Link
               to="/host/verify"
+              onClick={saveDraftImmediately}
               className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors ${
                 hostVerification?.status === 'verified'
                   ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
@@ -607,6 +885,51 @@ export default function CreateListing() {
 
       <main className="max-w-5xl mx-auto px-4 sm:px-6 pt-8">
         <form onSubmit={handleSubmit} className="space-y-8">
+          {/* Draft Restored Banner (Fix A) */}
+          {restoredDraftNotice?.active && (
+            <div className="p-4 sm:p-5 bg-emerald-50 border-2 border-emerald-300 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm animate-fade-in">
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 rounded-xl bg-emerald-100 text-emerald-800 flex items-center justify-center shrink-0 mt-0.5 border border-emerald-200">
+                  <Sparkles size={22} />
+                </div>
+                <div>
+                  <div className="inline-flex items-center gap-1.5 px-2 py-0.5 bg-emerald-200/70 text-emerald-900 rounded text-[11px] font-bold uppercase tracking-wider mb-1">
+                    <CheckCircle2 size={12} />
+                    <span>Autosaved Progress Loaded</span>
+                  </div>
+                  <h3 className="text-base font-black text-gray-950 tracking-tight">
+                    Your unfinished listing has been restored.
+                  </h3>
+                  <p className="text-xs text-emerald-900/90 mt-0.5">
+                    {restoredDraftNotice.title 
+                      ? `We safely recovered your in-progress draft for "${restoredDraftNotice.title}".`
+                      : 'We safely recovered your in-progress listing details, photos, and configurations.'}
+                    {restoredDraftNotice.savedAt && ` (Saved: ${new Date(restoredDraftNotice.savedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })})`}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 w-full sm:w-auto justify-end shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-emerald-200/60">
+                <button
+                  type="button"
+                  onClick={() => setRestoredDraftNotice(null)}
+                  className="px-3.5 py-2 bg-[#009A60] hover:bg-[#008250] text-white text-xs font-bold rounded-xl transition-all shadow-2xs cursor-pointer"
+                >
+                  Keep Editing
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDiscardDraft}
+                  className="px-3 py-2 bg-white hover:bg-rose-50 border border-rose-300 text-rose-700 text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                  title="Discard draft and reset all fields to start a new listing"
+                >
+                  <Trash2 size={14} />
+                  <span>Discard Draft</span>
+                </button>
+              </div>
+            </div>
+          )}
+
           {submitError && (
             <div className="p-4 bg-rose-50 border border-rose-200 rounded-xl text-rose-800 text-sm flex items-start gap-3">
               <AlertCircle size={20} className="shrink-0 text-rose-600 mt-0.5" />
@@ -635,6 +958,7 @@ export default function CreateListing() {
 
             <Link
               to="/host/verify"
+              onClick={saveDraftImmediately}
               className="px-4 py-2 bg-gray-900 hover:bg-black text-white text-xs font-bold rounded-xl transition-all shadow-sm shrink-0 flex items-center gap-1.5"
             >
               <span>{hostVerification ? 'Review Submitted Docs' : 'Verify Documents Now'}</span>

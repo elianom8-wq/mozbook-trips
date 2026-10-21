@@ -137,6 +137,24 @@ export default function HostActivitiesDashboard() {
     }
   };
 
+  // Compatibility redirect: Partner Dashboard is the single primary management hub
+  useEffect(() => {
+    const searchParams = new URLSearchParams(location.search);
+    const tabParam = searchParams.get('tab');
+    let targetTab = 'activities';
+    if (tabParam === 'trips') {
+      targetTab = 'trips';
+    } else if (tabParam === 'bookings') {
+      targetTab = 'bookings';
+    } else if (tabParam === 'earnings') {
+      targetTab = 'earnings';
+    } else if (tabParam) {
+      targetTab = tabParam;
+    }
+    searchParams.set('tab', targetTab);
+    navigate(`/partner/dashboard?${searchParams.toString()}`, { replace: true });
+  }, [location.search, navigate]);
+
   useEffect(() => {
     loadData();
   }, []);
@@ -365,6 +383,31 @@ export default function HostActivitiesDashboard() {
               </Link>
             </div>
           </div>
+        </div>
+
+        {/* Primary Multi-Service Partner Dashboard Integration Banner */}
+        <div className="bg-gradient-to-r from-emerald-950 via-slate-900 to-emerald-950 text-white rounded-2xl p-4 md:p-5 shadow-sm border border-emerald-800/40 flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0 border border-emerald-400/30">
+              <Sparkles size={20} />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold text-white uppercase tracking-wider">Primary Multi-Service Hub</span>
+                <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 text-[10px] font-bold">Partner Dashboard</span>
+              </div>
+              <p className="text-xs text-slate-300 mt-0.5">
+                Manage all your accommodations, activities, trips & tours, transport services, bookings, and earnings in the unified Partner Dashboard.
+              </p>
+            </div>
+          </div>
+          <Link
+            to={`/partner/dashboard?tab=${activeTab}`}
+            className="px-4 py-2.5 bg-[#009A60] hover:bg-[#008250] text-white text-xs font-bold rounded-xl shadow-xs shrink-0 flex items-center gap-2 transition-colors cursor-pointer"
+          >
+            <span>Open in Partner Dashboard</span>
+            <ChevronRight size={15} />
+          </Link>
         </div>
 
         {/* Primary Dashboard Navigation Tabs */}

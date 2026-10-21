@@ -312,12 +312,12 @@ export default function Navbar() {
                       </Link>
 
                       <Link 
-                        to="/host/activities" 
+                        to="/partner/dashboard?tab=activities" 
                         onClick={() => setIsMenuOpen(false)}
                         className="w-full block text-left px-4 py-2 text-sm hover:bg-emerald-50 font-medium text-[#009A60] flex items-center justify-between"
                       >
                         <span>🌴 Host Activities & Trips</span>
-                        <span className="text-[10px] bg-[#e6f7f0] text-[#009A60] font-bold px-2 py-0.5 rounded-full">New</span>
+                        <span className="text-[10px] bg-[#e6f7f0] text-[#009A60] font-bold px-2 py-0.5 rounded-full">Partner</span>
                       </Link>
 
                       <Link 
@@ -426,12 +426,12 @@ export default function Navbar() {
                       🏡 Mozbook your home (Properties)
                     </Link>
                     <Link 
-                      to="/host/activities" 
+                      to="/partner/dashboard?tab=activities" 
                       onClick={() => setIsMenuOpen(false)}
                       className="w-full block text-left px-4 py-2 text-sm hover:bg-emerald-50 font-medium text-[#009A60] flex items-center justify-between"
                     >
                       <span>🌴 Host Activities & Trips</span>
-                      <span className="text-[10px] bg-[#e6f7f0] text-[#009A60] font-bold px-2 py-0.5 rounded-full">New</span>
+                      <span className="text-[10px] bg-[#e6f7f0] text-[#009A60] font-bold px-2 py-0.5 rounded-full">Partner</span>
                     </Link>
                     <Link 
                       to="/host" 

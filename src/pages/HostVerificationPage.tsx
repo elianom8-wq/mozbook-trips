@@ -22,9 +22,13 @@ import {
   AlertTriangle,
   RefreshCw,
   Eye,
-  Info
+  Info,
+  Home,
+  Plus,
+  ArrowRight
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { getUserScopedDraft } from '../services/authSessionManager';
 import { 
   DocType, 
   submitHostVerification, 
@@ -110,42 +114,68 @@ export default function HostVerificationPage() {
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [acceptedPartnerTerms, setAcceptedPartnerTerms] = useState(false);
+  const [existingDraft, setExistingDraft] = useState<any | null>(null);
+  const [showUpdateDocuments, setShowUpdateDocuments] = useState(false);
 
   useEffect(() => {
-    if (user) {
-      setHostName(user.displayName || '');
-      getUserVerification(user.uid).then((data) => {
-        setExistingVerification(data);
-        if (data) {
-          setHostName(data.hostName);
-          setPhoneNumber(data.phoneNumber);
-          setDocType(data.docType);
-          setDocNumber(data.docNumber);
-          setDocFrontPhotoUrl(data.docFrontPhotoUrl || data.docPhotoUrl || '');
-          setDocBackPhotoUrl(data.docBackPhotoUrl || '');
-          if (data.expiryDate) setExpiryDate(data.expiryDate);
-          if (data.issueDate) setIssueDate(data.issueDate);
-          if (data.dateOfBirth) setDateOfBirth(data.dateOfBirth);
-          if (data.nationality) setNationality(data.nationality);
-          if (data.isExpired !== undefined) setIsExpired(data.isExpired);
-          if (data.daysUntilExpiry !== undefined) setDaysUntilExpiry(data.daysUntilExpiry);
-          if (data.expiryStatus) setExpiryStatus(data.expiryStatus);
-          if (data.extractedData) {
-            setExtractedRawData(data.extractedData);
-            if (data.extractedData.securityFeaturesDetected) {
-              setSecurityFeatures(data.extractedData.securityFeaturesDetected);
-            }
-            if (data.extractedData.validationNotes) {
-              setValidationNotes(data.extractedData.validationNotes);
-            }
+    if (!user) {
+      setExistingVerification(null);
+      setExistingDraft(null);
+      setHostName('');
+      setPhoneNumber('');
+      setDocNumber('');
+      setDocFrontPhotoUrl('');
+      setDocBackPhotoUrl('');
+      setExpiryDate('');
+      setIssueDate('');
+      setDateOfBirth('');
+      setNationality('');
+      setIsExpired(false);
+      setDaysUntilExpiry(undefined);
+      setExpiryStatus(undefined);
+      setSecurityFeatures([]);
+      setValidationNotes('');
+      setExtractedRawData(null);
+      setLoadingInitial(false);
+      return;
+    }
+
+    setLoadingInitial(true);
+    setHostName(user.displayName || '');
+    
+    // Check if user has an in-progress stay listing draft
+    const draft = getUserScopedDraft<any>(user.uid, 'stay_listing_draft');
+    setExistingDraft(draft);
+
+    getUserVerification(user.uid).then((data) => {
+      setExistingVerification(data);
+      if (data) {
+        setHostName(data.hostName);
+        setPhoneNumber(data.phoneNumber);
+        setDocType(data.docType);
+        setDocNumber(data.docNumber);
+        setDocFrontPhotoUrl(data.docFrontPhotoUrl || data.docPhotoUrl || '');
+        setDocBackPhotoUrl(data.docBackPhotoUrl || '');
+        if (data.expiryDate) setExpiryDate(data.expiryDate);
+        if (data.issueDate) setIssueDate(data.issueDate);
+        if (data.dateOfBirth) setDateOfBirth(data.dateOfBirth);
+        if (data.nationality) setNationality(data.nationality);
+        if (data.isExpired !== undefined) setIsExpired(data.isExpired);
+        if (data.daysUntilExpiry !== undefined) setDaysUntilExpiry(data.daysUntilExpiry);
+        if (data.expiryStatus) setExpiryStatus(data.expiryStatus);
+        if (data.extractedData) {
+          setExtractedRawData(data.extractedData);
+          if (data.extractedData.securityFeaturesDetected) {
+            setSecurityFeatures(data.extractedData.securityFeaturesDetected);
+          }
+          if (data.extractedData.validationNotes) {
+            setValidationNotes(data.extractedData.validationNotes);
           }
         }
-        setLoadingInitial(false);
-      });
-    } else {
+      }
       setLoadingInitial(false);
-    }
-  }, [user]);
+    });
+  }, [user?.uid]);
 
   // Recalculate expiry whenever user manually edits expiryDate
   const handleExpiryDateChange = (newDate: string) => {
@@ -405,11 +435,11 @@ export default function HostVerificationPage() {
       <div className="bg-white border-b border-gray-200 sticky top-0 z-30">
         <div className="max-w-4xl mx-auto px-4 sm:px-6 py-3.5 flex items-center justify-between">
           <Link
-            to="/host/create"
+            to={existingVerification?.status === 'verified' ? "/partner/dashboard?tab=accommodations" : "/host/create"}
             className="flex items-center gap-2 text-sm font-semibold text-gray-600 hover:text-gray-900 transition-colors"
           >
             <ChevronLeft size={18} />
-            <span>Back to Listing Studio</span>
+            <span>{existingVerification?.status === 'verified' ? 'Go to Partner Accommodations' : 'Back to Listing Studio'}</span>
           </Link>
           <div className="flex items-center gap-4">
             <Link to="/" className="hover:opacity-90">
@@ -442,10 +472,14 @@ export default function HostVerificationPage() {
                 <span>MozBook Host Identity Document Verification</span>
               </div>
               <h1 className="text-2xl sm:text-3xl font-extrabold text-gray-900 tracking-tight">
-                Document Verification & Expiry Tracking
+                {existingVerification?.status === 'verified' && !isExpired
+                  ? 'Host Identity Verified'
+                  : 'Document Verification & Expiry Tracking'}
               </h1>
               <p className="text-gray-600 text-sm max-w-xl leading-relaxed">
-                Take photos of your official identification (front and back for ID/DIRE, or main photo page for passport). Our document reader extracts legible details for your review before submission to the operations team.
+                {existingVerification?.status === 'verified' && !isExpired
+                  ? 'Your official identification has been verified by MozBook Operations. Your eligible properties display the Verified Host shield badge, and you are fully authorized to accept bookings.'
+                  : 'Take photos of your official identification (front and back for ID/DIRE, or main photo page for passport). Our document reader extracts legible details for your review before submission to the operations team.'}
               </p>
             </div>
 
@@ -538,8 +572,126 @@ export default function HostVerificationPage() {
           </div>
         </div>
 
-        {/* Existing Status Banner */}
-        {existingVerification && (
+        {/* Authoritative Verified Host Complete State (Fix B) */}
+        {existingVerification?.status === 'verified' && !isExpired && expiryStatus !== 'suspended' && (
+          <div className="bg-white rounded-3xl border border-emerald-200 p-6 sm:p-8 shadow-xs space-y-6">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-gray-100 pb-6">
+              <div className="flex items-start gap-4">
+                <div className="w-14 h-14 rounded-2xl bg-emerald-50 text-[#009A60] flex items-center justify-center shrink-0 border border-emerald-200">
+                  <ShieldCheck size={32} />
+                </div>
+                <div>
+                  <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-emerald-100 text-emerald-800 text-xs font-bold rounded-full mb-1">
+                    <CheckCircle2 size={13} />
+                    <span>Identity Verification Complete</span>
+                  </div>
+                  <h2 className="text-xl sm:text-2xl font-black text-gray-900 tracking-tight">
+                    Your Host Identity is Approved by MozBook Operations
+                  </h2>
+                  <p className="text-xs sm:text-sm text-gray-600 mt-1 max-w-xl leading-relaxed">
+                    Your official identity documents have been authenticated. All your eligible listings display the Verified Host shield badge, and your properties can accept guest bookings.
+                  </p>
+                </div>
+              </div>
+
+              <div className="shrink-0 p-4 bg-emerald-50/50 rounded-2xl border border-emerald-100 text-center w-full sm:w-auto">
+                <span className="text-[10px] text-gray-500 font-bold uppercase tracking-wider block">Verified Document</span>
+                <span className="text-sm font-bold text-gray-900 capitalize">
+                  {existingVerification.docType.replace('_', ' ')}
+                </span>
+                {existingVerification.expiryDate && (
+                  <span className="text-[11px] text-emerald-700 block mt-0.5 font-medium">
+                    Valid until {existingVerification.expiryDate}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Unfinished Draft Resume Banner (if user has a draft) */}
+            {existingDraft && (
+              <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-xl bg-amber-200 text-amber-800 flex items-center justify-center shrink-0">
+                    <Home size={18} />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-amber-900">
+                      Unfinished Listing Draft Available
+                    </h4>
+                    <p className="text-[11px] text-amber-800">
+                      You have an in-progress draft for "{existingDraft.title || 'Untitled Property'}" with photos and pricing preserved.
+                    </p>
+                  </div>
+                </div>
+                <Link
+                  to="/host/create"
+                  className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold rounded-xl transition-all shadow-xs flex items-center gap-1.5 shrink-0"
+                >
+                  <span>Resume Listing Draft</span>
+                  <ArrowRight size={13} />
+                </Link>
+              </div>
+            )}
+
+            {/* Navigation Action Buttons */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
+              <Link
+                to="/partner/dashboard?tab=accommodations"
+                className="p-5 rounded-2xl border-2 border-[#009A60] bg-[#e6f7f0]/40 hover:bg-[#e6f7f0] text-gray-900 transition-all flex items-center justify-between group shadow-xs"
+              >
+                <div className="flex items-center gap-3.5">
+                  <div className="w-10 h-10 rounded-xl bg-[#009A60] text-white flex items-center justify-center shrink-0">
+                    <Home size={20} />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-sm text-gray-900 group-hover:text-[#008250] flex items-center gap-1">
+                      <span>Go to My Accommodations</span>
+                    </h3>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      View and manage your registered properties on the Partner Dashboard
+                    </p>
+                  </div>
+                </div>
+                <ArrowRight size={18} className="text-[#009A60] group-hover:translate-x-1 transition-transform shrink-0" />
+              </Link>
+
+              <Link
+                to="/host/create"
+                className="p-5 rounded-2xl border border-gray-200 hover:border-gray-400 bg-white hover:bg-gray-50 text-gray-900 transition-all flex items-center justify-between group shadow-xs"
+              >
+                <div className="flex items-center gap-3.5">
+                  <div className="w-10 h-10 rounded-xl bg-gray-900 text-white flex items-center justify-center shrink-0">
+                    <Plus size={20} />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-sm text-gray-900 group-hover:text-black flex items-center gap-1">
+                      <span>Create a New Listing</span>
+                    </h3>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      Publish a new beach villa, urban home, or safari lodge
+                    </p>
+                  </div>
+                </div>
+                <ArrowRight size={18} className="text-gray-400 group-hover:translate-x-1 transition-transform shrink-0" />
+              </Link>
+            </div>
+
+            {/* Toggle to view/update credentials */}
+            <div className="pt-4 border-t border-gray-100 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-gray-500">
+              <span>Your identity documents are securely on file. You do not need to re-upload.</span>
+              <button
+                type="button"
+                onClick={() => setShowUpdateDocuments(!showUpdateDocuments)}
+                className="text-xs text-[#009A60] hover:text-[#008250] font-bold hover:underline cursor-pointer text-left"
+              >
+                {showUpdateDocuments ? 'Hide Document Upload Form' : 'Update / Replace Submitted Documents'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Existing Status Banner for Pending / Rejected / Expired */}
+        {existingVerification && (existingVerification.status !== 'verified' || isExpired || expiryStatus === 'suspended') && (
           <div className={`p-5 rounded-2xl border ${
             existingVerification.status === 'verified' 
               ? 'bg-emerald-50 border-emerald-200 text-emerald-900' 
@@ -576,6 +728,32 @@ export default function HostVerificationPage() {
           </div>
         )}
 
+        {/* Unfinished Draft Resume Banner for Pending or Unverified Hosts */}
+        {existingDraft && existingVerification?.status !== 'verified' && (
+          <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-xl bg-amber-200 text-amber-800 flex items-center justify-center shrink-0">
+                <Home size={18} />
+              </div>
+              <div>
+                <h4 className="text-xs font-bold text-amber-900">
+                  Unfinished Listing Draft Available
+                </h4>
+                <p className="text-[11px] text-amber-800">
+                  You have an in-progress draft for "{existingDraft.title || 'Untitled Property'}" with photos and pricing preserved.
+                </p>
+              </div>
+            </div>
+            <Link
+              to="/host/create"
+              className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold rounded-xl transition-all shadow-xs flex items-center gap-1.5 shrink-0"
+            >
+              <span>Resume Listing Draft</span>
+              <ArrowRight size={13} />
+            </Link>
+          </div>
+        )}
+
         {/* Success Alert */}
         {successMessage && (
           <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-800 text-sm flex items-center gap-3">
@@ -592,7 +770,8 @@ export default function HostVerificationPage() {
           </div>
         )}
 
-        {/* Verification Form */}
+        {/* Verification Form (shown when unverified, expired, or explicitly toggled) */}
+        {(showUpdateDocuments || existingVerification?.status !== 'verified' || isExpired || expiryStatus === 'suspended') && (
         <form onSubmit={handleSubmit} className="space-y-8">
           {/* Step 1: Select Document Type */}
           <div className="bg-white p-6 sm:p-8 rounded-2xl border border-gray-200 shadow-xs space-y-6">
@@ -1060,6 +1239,7 @@ export default function HostVerificationPage() {
             </button>
           </div>
         </form>
+        )}
       </main>
     </div>
   );
