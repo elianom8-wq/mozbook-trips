@@ -2,6 +2,7 @@ import express from "express";
 import http from "http";
 import { createServer as createViteServer } from "vite";
 import path from "path";
+import fs from "fs";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
 import firebaseConfig from "./firebase-applet-config.json";
@@ -189,9 +190,145 @@ async function startServer() {
   }
 
   // =========================================================================
-  // PaySuite Payment Engine Endpoints (Stage 2B)
-  // THE MOZBOOK BACKEND/PAYMENT REGISTRY IS AUTHORITATIVE.
+  // Travel DMC Package Image Upload & Storage Endpoints
+  // Enforces partner identity, MIME type validation, and 10MB file limits.
   // =========================================================================
+
+  // Serve static package uploads
+  const uploadsBaseDir = path.resolve(process.cwd(), "public", "uploads", "packages");
+  try {
+    if (!fs.existsSync(uploadsBaseDir)) {
+      fs.mkdirSync(uploadsBaseDir, { recursive: true });
+    }
+  } catch (err) {
+    console.warn("Could not create uploads directory:", err);
+  }
+  app.use("/uploads", express.static(path.resolve(process.cwd(), "public", "uploads")));
+
+  /**
+   * POST /api/dmc/packages/upload-image
+   * Secure server upload boundary for Travel DMC packages.
+   * Verifies partner authentication, file size (<= 10MB), and image MIME types.
+   */
+  app.post("/api/dmc/packages/upload-image", async (req, res) => {
+    try {
+      const user = await authenticateRequest(req);
+      if (!user || !user.uid) {
+        return res.status(401).json({
+          error: "Authentication required. Please sign in as an authorized DMC partner."
+        });
+      }
+
+      const { packageId, fileName, mimeType, fileSize, base64Data, partnerId } = req.body;
+
+      // Security check: Partner cannot upload assets on behalf of another partner UID
+      if (partnerId && partnerId !== user.uid) {
+        return res.status(403).json({
+          error: "Forbidden. You cannot upload assets for another partner account."
+        });
+      }
+
+      // MIME type validation
+      const ALLOWED_MIMES = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
+      if (!mimeType || !ALLOWED_MIMES.includes(mimeType.toLowerCase())) {
+        return res.status(400).json({
+          error: "Invalid file format. Only JPG, JPEG, PNG, and WebP images are supported."
+        });
+      }
+
+      // 10 MB Size validation
+      const MAX_BYTES = 10 * 1024 * 1024;
+      if (!fileSize || typeof fileSize !== "number" || fileSize > MAX_BYTES) {
+        return res.status(400).json({
+          error: "File size exceeds the 10 MB limit."
+        });
+      }
+
+      if (!base64Data || typeof base64Data !== "string") {
+        return res.status(400).json({
+          error: "Missing image payload."
+        });
+      }
+
+      // Extract raw base64 data
+      const matches = base64Data.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+      const rawBase64 = matches ? matches[2] : base64Data;
+      const buffer = Buffer.from(rawBase64, "base64");
+
+      if (buffer.length > MAX_BYTES) {
+        return res.status(400).json({
+          error: "Decoded image exceeds the 10 MB limit."
+        });
+      }
+
+      // Safe alphanumeric paths to prevent path traversal
+      const safePkgId = (packageId || "draft").replace(/[^a-zA-Z0-9_-]/g, "");
+      const cleanFileName = (fileName || "package_image.jpg").replace(/[^a-zA-Z0-9_.-]/g, "_");
+      const diskFileName = `${Date.now()}_${cleanFileName}`;
+
+      const targetDir = path.resolve(process.cwd(), "public", "uploads", "packages", user.uid, safePkgId);
+      fs.mkdirSync(targetDir, { recursive: true });
+
+      const filePath = path.join(targetDir, diskFileName);
+      fs.writeFileSync(filePath, buffer);
+
+      const publicUrl = `/uploads/packages/${user.uid}/${safePkgId}/${diskFileName}`;
+      const storagePath = `dmc_packages/${user.uid}/${safePkgId}/${diskFileName}`;
+
+      return res.json({
+        success: true,
+        url: publicUrl,
+        storagePath,
+        fileName: cleanFileName,
+        fileSize: buffer.length,
+        mimeType: mimeType.toLowerCase()
+      });
+    } catch (err: any) {
+      console.error("[upload-image] Error processing upload:", err);
+      return res.status(500).json({
+        error: "Internal error processing package image upload."
+      });
+    }
+  });
+
+  /**
+   * POST /api/dmc/packages/delete-image
+   * Secure deletion endpoint scoped to the authenticated partner.
+   */
+  app.post("/api/dmc/packages/delete-image", async (req, res) => {
+    try {
+      const user = await authenticateRequest(req);
+      if (!user || !user.uid) {
+        return res.status(401).json({ error: "Authentication required." });
+      }
+
+      const { storagePath } = req.body;
+      if (!storagePath || typeof storagePath !== "string") {
+        return res.status(400).json({ error: "Missing storagePath parameter." });
+      }
+
+      // Ensure path is strictly scoped to this partner's namespace
+      const expectedPrefix = `dmc_packages/${user.uid}/`;
+      if (!storagePath.startsWith(expectedPrefix)) {
+        return res.status(403).json({
+          error: "Forbidden. You cannot delete files belonging to another account."
+        });
+      }
+
+      const parts = storagePath.replace("dmc_packages/", "").split("/");
+      if (parts.length >= 3) {
+        const filePath = path.resolve(process.cwd(), "public", "uploads", "packages", parts[0], parts[1], parts[2]);
+        if (fs.existsSync(filePath)) {
+          fs.unlinkSync(filePath);
+        }
+      }
+
+      return res.json({ success: true });
+    } catch (err: any) {
+      console.warn("[delete-image] Could not delete image:", err);
+      return res.json({ success: true });
+    }
+  });
 
   /**
    * POST /api/payments/create-intent

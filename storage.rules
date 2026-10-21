@@ -1,0 +1,36 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Helper: User is signed in
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Helper: User is owner of the path
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // Helper: Valid image MIME type and size limit (10 MB max)
+    function isValidImage() {
+      return request.resource.contentType.matches('image/(jpeg|jpg|png|webp)')
+        && request.resource.size <= 10 * 1024 * 1024;
+    }
+
+    // Travel DMC Package Media
+    // Path structure: dmc_packages/{userId}/{packageId}/{fileName}
+    match /dmc_packages/{userId}/{packageId}/{fileName} {
+      // Package images are publicly readable so travelers can view package showcases
+      allow read: if true;
+      // Only the authenticated partner owning this path can upload or overwrite images
+      allow create, update: if isOwner(userId) && isValidImage();
+      // Only the authenticated partner owning this path can delete their package images
+      allow delete: if isOwner(userId);
+    }
+
+    // Default deny for all other storage paths
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

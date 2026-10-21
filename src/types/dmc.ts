@@ -126,6 +126,7 @@ export interface TravelPackage {
   // Media
   coverImage: string;
   images: string[];
+  imageMetadata?: PackageImageMetadata[];
   
   // Operational State
   status: 'draft' | 'pending' | 'published' | 'paused' | 'archived';
@@ -135,6 +136,17 @@ export interface TravelPackage {
   
   createdAt: string;
   updatedAt: string;
+}
+
+export interface PackageImageMetadata {
+  id: string;
+  url: string;
+  storagePath?: string;
+  fileName?: string;
+  fileSize?: number;
+  mimeType?: string;
+  uploadedAt: string;
+  isCover?: boolean;
 }
 
 export interface DmcProfile {
