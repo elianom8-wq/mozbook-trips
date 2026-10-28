@@ -164,6 +164,9 @@ export default function MozBookTrips() {
   };
 
   const filteredActivities = activities.filter((act) => {
+    // Defense-in-depth: only published experiences are public
+    if (act.status !== 'published') return false;
+
     if (selectedType !== 'all') {
       if (act.type !== selectedType) return false;
     } else {
@@ -636,6 +639,10 @@ export default function MozBookTrips() {
                         src={activity.coverImage || activity.images?.[0] || 'https://images.unsplash.com/photo-1544551763-46a013bb70d5?auto=format&fit=crop&w=1000&q=80'}
                         alt={activity.title}
                         className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                        onError={(e) => {
+                          (e.currentTarget as HTMLImageElement).src =
+                            'https://images.unsplash.com/photo-1547471080-7cc2caa01a7e?auto=format&fit=crop&w=1000&q=80';
+                        }}
                       />
                       <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />
 

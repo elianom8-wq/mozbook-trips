@@ -193,6 +193,10 @@ function reserveExperienceInventoryInMemory(
     throw new InventoryError(403, 'Booking unavailable: Host account is currently suspended for safety or compliance.');
   }
 
+  if (params.status && params.status !== 'published') {
+    throw new InventoryError(400, `Booking unavailable: Experience '${params.activityId}' is not published (status: ${params.status}).`);
+  }
+
   let slot = memoryExperienceSlots.get(slotDocId);
   if (!slot) {
     slot = {
@@ -330,6 +334,7 @@ export interface ReserveExperienceParams {
   idempotencyKey?: string;
   pickupRequested?: boolean;
   pickupNotes?: string;
+  status?: string;
   isHostSuspended?: boolean;
   isCustomerSuspended?: boolean;
 }
@@ -352,6 +357,7 @@ export interface ReserveStayParams {
   accommodationId?: string;
   travelGroupId?: string;
   idempotencyKey?: string;
+  status?: string;
   isHostSuspended?: boolean;
   isCustomerSuspended?: boolean;
 }
@@ -452,6 +458,11 @@ export async function reserveExperienceInventory(params: ReserveExperienceParams
         throw new InventoryError(404, `Experience '${params.activityId}' not found.`);
       }
       const act = actSnap.data()!;
+
+      // Enforce experience publication status
+      if (act.status && act.status !== 'published') {
+        throw new InventoryError(400, `Booking unavailable: Experience '${params.activityId}' is not published (status: ${act.status}).`);
+      }
 
       // Enforce both customer and host suspension checks authoritatively
       await assertCustomerNotSuspended(params.customerUserId, adminDb, transaction);
@@ -648,6 +659,10 @@ function reserveStayInventoryInMemory(
 
   if (params.isHostSuspended || (params.hostId && memorySuspendedHosts.has(params.hostId))) {
     throw new InventoryError(403, 'Booking unavailable: Host account is currently suspended for safety or compliance.');
+  }
+
+  if (params.status && params.status !== 'published') {
+    throw new InventoryError(400, `Booking unavailable: Property '${params.listingId}' is not published (status: ${params.status}).`);
   }
 
   const mozbookUnits = 5; // Authoritative default stay unit allocation limit
@@ -875,6 +890,11 @@ export async function reserveStayInventory(params: ReserveStayParams) {
       }
 
       const listing = listingSnap.data()!;
+
+      // Enforce property publication status
+      if (listing.status && listing.status !== 'published') {
+        throw new InventoryError(400, `Booking unavailable: Property '${params.listingId}' is not published (status: ${listing.status}).`);
+      }
 
       // Enforce both customer and host suspension checks authoritatively
       await assertCustomerNotSuspended(params.customerUserId, adminDb, transaction);

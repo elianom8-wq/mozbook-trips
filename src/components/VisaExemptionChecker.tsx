@@ -26,6 +26,7 @@ import {
   evaluateVisaRequirement,
   BORDER_POSTS,
   BORDER_POST_INFO,
+  BORDER_POST_PROVINCE_GROUPS,
   OFFICIAL_SOURCE,
   VISA_DISCLAIMER
 } from '../data/visaEngine';
@@ -113,6 +114,18 @@ export default function VisaExemptionChecker({ initialNationality, onNationality
       stayDays
     });
   }, [selectedNationalityKey, passportType, travelPurpose, stayDays]);
+
+  // Sequentially indexed border posts grouped by province
+  const groupedBorderPosts = useMemo(() => {
+    let counter = 0;
+    return BORDER_POST_PROVINCE_GROUPS.map((group) => ({
+      ...group,
+      posts: group.posts.map((p) => {
+        counter += 1;
+        return { ...p, index: counter };
+      })
+    }));
+  }, []);
 
   // Sync with prop when changes
   useEffect(() => {
@@ -748,60 +761,95 @@ export default function VisaExemptionChecker({ initialNationality, onNationality
         {/* View Mode 3: Authorised Border Posts Directory */}
         {activeTab === 'border_posts' && (
           <div className="bg-white rounded-3xl border border-gray-200 shadow-sm p-6 md:p-8 space-y-6 animate-fadeIn">
-            <div className="space-y-2">
+            <div className="space-y-3">
               <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-100 text-amber-900 text-xs font-bold">
                 <MapPin size={14} />
-                <span>Travel Information</span>
+                <span>Travel Information • {BORDER_POSTS.length} Authorised Border Posts</span>
               </div>
-              <h3 className="text-xl font-black text-gray-900">
-                Authorised Border Posts
-              </h3>
-              <p className="text-xs text-gray-600 leading-relaxed max-w-3xl">
-                View Mozambique border posts where border visa services may be available. Eligibility and issuance are subject to applicable immigration rules and immigration authority decisions.
+
+              <div>
+                <h3 className="text-xl md:text-2xl font-black text-gray-900 tracking-tight">
+                  Authorised Border Posts
+                </h3>
+                <p className="text-xs font-bold text-emerald-800 mt-1 flex items-center gap-1.5">
+                  <span>Authorised to issue border visas (<em>Visto de Fronteira</em>) under official MINEC regulations</span>
+                </p>
+              </div>
+
+              <p className="text-xs text-gray-600 leading-relaxed max-w-4xl">
+                Mozambique's Ministry of Foreign Affairs and Cooperation (MINEC) designates official border posts authorised to issue border visas (<em>Visto de Fronteira</em>). Below are the {BORDER_POSTS.length} designated legal points of entry, grouped under Maputo City and their respective provinces. Visa eligibility and issuance remain subject to applicable immigration rules, bilateral agreements, and the decision of Mozambique immigration authorities.
               </p>
-              <p className="text-xs font-bold text-red-600">
-                ⚠️ Never assume that visa on arrival is guaranteed. Final issuance is subject to Mozambique immigration authorities and the requirements applicable at each border post.
-              </p>
+
+              <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-2xl flex items-start gap-2.5 text-xs text-amber-900">
+                <AlertTriangle size={16} className="text-amber-600 shrink-0 mt-0.5" />
+                <div>
+                  <span className="font-bold text-amber-950">Important Notice & Non-Guarantee Warning:</span> Appearing on this list does not guarantee that a visa will be issued. Travellers should never assume that a visa on arrival is automatically granted. Final visa issuance and admission remain strictly at the discretion of Mozambique immigration authorities at the port of entry. Travellers requiring entry visas are strongly advised to secure an approved eVisa or consular visa prior to departure whenever eligible.
+                </div>
+              </div>
             </div>
 
-            {/* Grid of Border Posts */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 pt-2">
-              {BORDER_POSTS.map((post, idx) => (
-                <div key={idx} className="p-3 bg-slate-50 border border-slate-200/80 rounded-xl text-xs font-semibold text-slate-800 flex items-center gap-2">
-                  <span className="w-5 h-5 rounded-full bg-emerald-100 text-[#006b42] text-[10px] font-extrabold flex items-center justify-center shrink-0">
-                    {idx + 1}
-                  </span>
-                  <span className="truncate">{post}</span>
+            {/* Provincial Groupings Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 pt-2">
+              {groupedBorderPosts.map((group) => (
+                <div 
+                  key={group.province} 
+                  className="bg-slate-50/70 border border-slate-200/90 rounded-2xl p-4 flex flex-col justify-between hover:border-slate-300 transition-colors"
+                >
+                  <div>
+                    <div className="flex items-center justify-between pb-2.5 border-b border-slate-200/80 mb-3">
+                      <h4 className="text-xs font-black uppercase tracking-wider text-slate-800 flex items-center gap-1.5">
+                        <MapPin size={13} className="text-[#009A60]" />
+                        <span>{group.province}</span>
+                      </h4>
+                      <span className="text-[10px] font-bold text-slate-600 bg-white px-2 py-0.5 rounded-full border border-slate-200 shadow-2xs">
+                        {group.posts.length} {group.posts.length === 1 ? 'location' : 'locations'}
+                      </span>
+                    </div>
+
+                    <ul className="space-y-2">
+                      {group.posts.map((post) => (
+                        <li 
+                          key={post.name} 
+                          className="p-2.5 bg-white border border-slate-200/80 rounded-xl text-xs flex items-center justify-between gap-2 shadow-2xs hover:border-emerald-200 transition-colors"
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="w-5 h-5 rounded-full bg-emerald-100 text-[#006b42] text-[10px] font-extrabold flex items-center justify-center shrink-0">
+                              {post.index}
+                            </span>
+                            <span className="font-bold text-slate-900 truncate" title={post.name}>
+                              {post.name}
+                            </span>
+                          </div>
+                          <span className="text-[10px] font-semibold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-md shrink-0">
+                            {post.type}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
                 </div>
               ))}
             </div>
 
-            <div className="pt-2">
-              <a
-                href={BORDER_POST_INFO.official_source}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-xs font-bold text-[#009A60] hover:underline inline-flex items-center gap-1"
-              >
-                <span>Official Mozambique border information</span>
-                <ExternalLink size={12} />
-              </a>
-            </div>
           </div>
         )}
 
-        {/* Consumer-Facing Official Source & Legal Information Footer */}
+        {/* Single Consumer-Facing Official Source & Legal Information Footer */}
         <div className="p-4 bg-gray-50 border border-gray-200 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-gray-600">
           <div className="space-y-0.5">
             <div className="flex items-center gap-2">
               <span className="font-bold text-gray-800">Official Source:</span>
               <a 
-                href={OFFICIAL_SOURCE.url} 
+                href={activeTab === 'border_posts' ? (BORDER_POST_INFO.official_source || "https://minec.gov.mz/vistos-de-entrada/") : OFFICIAL_SOURCE.url} 
                 target="_blank" 
                 rel="noopener noreferrer" 
                 className="text-[#009A60] hover:underline font-semibold flex items-center gap-1"
               >
-                <span>Official Mozambique immigration information (evisa.gov.mz)</span>
+                <span>
+                  {activeTab === 'border_posts' 
+                    ? 'Official MINEC Entry & Border Visa List (minec.gov.mz)' 
+                    : 'Official Mozambique immigration information (evisa.gov.mz)'}
+                </span>
                 <ExternalLink size={11} />
               </a>
             </div>

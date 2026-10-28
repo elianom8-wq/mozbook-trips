@@ -78,6 +78,8 @@ export interface ActivityTrip {
   whatToBring: string[];
   requirements: string[];
   status: ActivityTripStatus;
+  isLocalDraft?: boolean;
+  isHostVerified?: boolean;
   rating: number;
   reviewsCount: number;
 

@@ -26,13 +26,13 @@
 
   "border_visa_information": {
     "status": "CONDITIONAL",
-    "message": "Mozambique has authorised border posts that may issue border visas. Eligibility and issuance are subject to the applicable immigration rules and the decision of the immigration authorities. Do not assume that every nationality can obtain a visa on arrival.",
+    "message": "Mozambique has authorised border posts that may issue border visas (Visto de Fronteira). Eligibility and issuance are subject to the applicable immigration rules and the decision of the immigration authorities. Do not assume that every nationality can obtain a visa on arrival.",
     "official_source": "https://minec.gov.mz/vistos-de-entrada/",
     "authorized_entry_points": [
       "Maputo International Airport",
       "Ressano Garcia",
       "Namaacha",
-      "Ponta de Ouro",
+      "Ponta do Ouro",
       "Goba",
       "Chicualacuala",
       "Giryondo",
@@ -56,6 +56,90 @@
       "Lichinga Aerodrome",
       "Pemba Aerodrome",
       "Mocimboa da Praia Aerodrome"
+    ],
+    "province_groupings": [
+      {
+        "province": "Maputo City",
+        "posts": [
+          { "name": "Maputo International Airport", "type": "Airport" }
+        ]
+      },
+      {
+        "province": "Maputo Province",
+        "posts": [
+          { "name": "Ressano Garcia", "type": "Land border" },
+          { "name": "Namaacha", "type": "Land border" },
+          { "name": "Ponta do Ouro", "type": "Land border" },
+          { "name": "Goba", "type": "Land border" }
+        ]
+      },
+      {
+        "province": "Gaza Province",
+        "posts": [
+          { "name": "Chicualacuala", "type": "Land border" },
+          { "name": "Giryondo", "type": "Land border" },
+          { "name": "Pafuri", "type": "Land border" }
+        ]
+      },
+      {
+        "province": "Inhambane Province",
+        "posts": [
+          { "name": "Vilanculos Aerodrome", "type": "Aerodrome" },
+          { "name": "Inhambane Aerodrome", "type": "Aerodrome" }
+        ]
+      },
+      {
+        "province": "Sofala Province",
+        "posts": [
+          { "name": "Beira International Airport", "type": "International airport" }
+        ]
+      },
+      {
+        "province": "Manica Province",
+        "posts": [
+          { "name": "Machipanda", "type": "Land border" },
+          { "name": "Espungabera", "type": "Land border" },
+          { "name": "Chimoio Aerodrome", "type": "Aerodrome" }
+        ]
+      },
+      {
+        "province": "Tete Province",
+        "posts": [
+          { "name": "Tete Aerodrome", "type": "Aerodrome" },
+          { "name": "Cuchamano", "type": "Land border" },
+          { "name": "Cassacatiza", "type": "Land border" },
+          { "name": "Calomue", "type": "Land border" },
+          { "name": "Songo Aerodrome", "type": "Aerodrome" },
+          { "name": "Zobwé", "type": "Land border" }
+        ]
+      },
+      {
+        "province": "Zambézia Province",
+        "posts": [
+          { "name": "Quelimane Aerodrome", "type": "Aerodrome" },
+          { "name": "Melosa", "type": "Land border" }
+        ]
+      },
+      {
+        "province": "Nampula Province",
+        "posts": [
+          { "name": "Nampula International Airport", "type": "International airport" }
+        ]
+      },
+      {
+        "province": "Niassa Province",
+        "posts": [
+          { "name": "Mandimba", "type": "Land border" },
+          { "name": "Lichinga Aerodrome", "type": "Aerodrome" }
+        ]
+      },
+      {
+        "province": "Cabo Delgado Province",
+        "posts": [
+          { "name": "Pemba Aerodrome", "type": "Aerodrome" },
+          { "name": "Mocimboa da Praia Aerodrome", "type": "Aerodrome" }
+        ]
+      }
     ]
   },
 

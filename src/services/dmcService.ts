@@ -12,7 +12,7 @@ import {
   serverTimestamp,
   orderBy
 } from 'firebase/firestore';
-import { db } from '../firebase';
+import { db, auth } from '../firebase';
 import { 
   DmcProfile, 
   TravelPackage, 
@@ -23,7 +23,7 @@ import {
   DmcDocumentRecord
 } from '../types/dmc';
 import { calculateCommission, MOZBOOK_COMMISSION_PERCENT, PARTNER_SHARE_PERCENT } from '../config/platformCommission';
-import { sanitizeFirestorePayload } from './listingService';
+import { sanitizeFirestorePayload, checkHostVerificationStatus } from './listingService';
 
 // Collections
 const VERIFICATIONS_COLLECTION = 'verifications';
@@ -424,58 +424,72 @@ export async function updateDmcVerificationStatus(
 export async function createTravelPackage(
   packageData: Omit<TravelPackage, 'id' | 'createdAt' | 'updatedAt'>
 ): Promise<TravelPackage> {
+  const currentUser = auth.currentUser;
+  const hostId = (packageData as any).dmcId || (packageData as any).hostId || currentUser?.uid;
+  if (!currentUser && !hostId) {
+    throw new Error('Authentication required: You must be logged in to create a travel package.');
+  }
+  const verifStatus = await checkHostVerificationStatus(hostId);
+  if (verifStatus.isSuspended) {
+    throw new Error('Host account is suspended. Cannot create or publish travel packages.');
+  }
+
+  let targetStatus = (packageData as any).status || 'published';
+  if (targetStatus !== 'draft') {
+    targetStatus = verifStatus.isVerified ? ((packageData as any).status || 'published') : 'pending';
+  }
+
   const now = new Date().toISOString();
-  const newId = 'pkg_' + Date.now();
+  const firestorePayload = sanitizeFirestorePayload({
+    ...packageData,
+    hostId,
+    status: targetStatus,
+    isHostVerified: verifStatus.isVerified,
+    type: 'dmc_package',
+    city: packageData.primaryDestination || (packageData.destinations && packageData.destinations[0]) || 'Mozambique',
+    priceAdult: packageData.pricePerPersonMzn,
+    maxGuests: packageData.maxGroupSize,
+    minGuests: packageData.minGroupSize,
+    duration: `${packageData.durationDays} Days / ${packageData.durationNights} Nights`,
+    meetingPoint: packageData.pickupLocation || 'Maputo International Airport (MPM)',
+    pickup: {
+      offered: true,
+      location: packageData.pickupLocation || 'Maputo / Designated Arrival Port',
+      instructions: packageData.meetingPointInstructions || 'Included meet-and-greet transfer'
+    },
+    scheduleType: packageData.scheduleType === 'scheduled_dates' ? 'specific_dates' : 'flexible',
+    specificDates: packageData.departureDates || [],
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp()
+  });
+
+  let packageId = 'pkg_' + Date.now();
+  let effectiveStatus = targetStatus;
+  let isLocalDraft = false;
+
+  try {
+    const coll = collection(db, PACKAGES_COLLECTION);
+    const docRef = await addDoc(coll, firestorePayload);
+    packageId = docRef.id;
+  } catch (err) {
+    console.warn('Firestore write for travel package failed, saving as unpersisted local draft:', err);
+    effectiveStatus = 'draft';
+    isLocalDraft = true;
+  }
 
   const newPkg: TravelPackage = {
     ...packageData,
-    id: newId,
+    id: packageId,
+    status: effectiveStatus as any,
     currency: 'MZN',
     createdAt: now,
-    updatedAt: now
+    updatedAt: now,
+    ...(isLocalDraft ? { isLocalDraft: true } : {})
   };
 
-  // Local storage
+  // Cache to local storage only with accurate status (draft if unpersisted)
   const localList = getLocalItems<TravelPackage>(STORAGE_KEY_PACKAGES);
-  localList.unshift(newPkg);
-  saveLocalItems(STORAGE_KEY_PACKAGES, localList);
-
-  // Firestore
-  try {
-    const coll = collection(db, PACKAGES_COLLECTION);
-    const firestorePayload = sanitizeFirestorePayload({
-      ...newPkg,
-      type: 'dmc_package',
-      city: newPkg.primaryDestination || (newPkg.destinations && newPkg.destinations[0]) || 'Mozambique',
-      priceAdult: newPkg.pricePerPersonMzn,
-      maxGuests: newPkg.maxGroupSize,
-      minGuests: newPkg.minGroupSize,
-      duration: `${newPkg.durationDays} Days / ${newPkg.durationNights} Nights`,
-      meetingPoint: newPkg.pickupLocation || 'Maputo International Airport (MPM)',
-      pickup: {
-        offered: true,
-        location: newPkg.pickupLocation || 'Maputo / Designated Arrival Port',
-        instructions: newPkg.meetingPointInstructions || 'Included meet-and-greet transfer'
-      },
-      scheduleType: newPkg.scheduleType === 'scheduled_dates' ? 'specific_dates' : 'flexible',
-      specificDates: newPkg.departureDates || [],
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp()
-    });
-
-    const docRef = await addDoc(coll, firestorePayload);
-    newPkg.id = docRef.id;
-
-    // Update local cache ID
-    const updatedLocal = getLocalItems<TravelPackage>(STORAGE_KEY_PACKAGES);
-    const idx = updatedLocal.findIndex(p => p.id === newId);
-    if (idx >= 0) {
-      updatedLocal[idx].id = docRef.id;
-      saveLocalItems(STORAGE_KEY_PACKAGES, updatedLocal);
-    }
-  } catch (err) {
-    console.warn('Firestore write for travel package failed, cached locally:', err);
-  }
+  saveLocalItems(STORAGE_KEY_PACKAGES, [newPkg, ...localList.filter(p => p.id !== packageId)]);
 
   return newPkg;
 }

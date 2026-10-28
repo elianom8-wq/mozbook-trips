@@ -1822,10 +1822,14 @@ export default function PartnerDashboard() {
                         <span className="absolute top-3 left-3 bg-black/70 backdrop-blur-xs text-white text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-lg">
                           {activity.category}
                         </span>
-                        <span className={`absolute top-3 right-3 text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                          activity.status === 'published' ? 'bg-[#009A60] text-white' : 'bg-gray-800 text-white'
+                        <span className={`absolute top-3 right-3 text-[10px] font-bold px-2.5 py-0.5 rounded-full ${
+                          activity.id.startsWith('act_')
+                            ? 'bg-amber-600 text-white ring-1 ring-amber-400'
+                            : activity.status === 'published'
+                            ? 'bg-[#009A60] text-white'
+                            : 'bg-gray-800 text-white'
                         }`}>
-                          {activity.status}
+                          {activity.id.startsWith('act_') ? 'Unsynced Local Draft' : activity.status}
                         </span>
                       </div>
 
@@ -1942,6 +1946,15 @@ export default function PartnerDashboard() {
                         )}
                         <span className="absolute top-3 left-3 bg-black/70 backdrop-blur-xs text-white text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-lg">
                           {trip.category}
+                        </span>
+                        <span className={`absolute top-3 right-3 text-[10px] font-bold px-2.5 py-0.5 rounded-full ${
+                          trip.id.startsWith('act_')
+                            ? 'bg-amber-600 text-white ring-1 ring-amber-400'
+                            : trip.status === 'published'
+                            ? 'bg-[#009A60] text-white'
+                            : 'bg-gray-800 text-white'
+                        }`}>
+                          {trip.id.startsWith('act_') ? 'Unsynced Local Draft' : (trip.status || 'draft')}
                         </span>
                         {trip.multiDayDetails && (
                           <span className="absolute bottom-3 left-3 bg-emerald-950/80 text-emerald-300 text-[10px] font-bold px-2 py-0.5 rounded shadow-2xs border border-emerald-400/30">
@@ -2107,9 +2120,13 @@ export default function PartnerDashboard() {
                           </span>
                           <div className="absolute top-3 right-3 flex items-center gap-1.5">
                             <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full ${
-                              t.status === 'published' ? 'bg-[#009A60] text-white' : 'bg-gray-800 text-white'
+                              t.id.startsWith('tr_')
+                                ? 'bg-amber-600 text-white ring-1 ring-amber-400'
+                                : t.status === 'published'
+                                ? 'bg-[#009A60] text-white'
+                                : 'bg-gray-800 text-white'
                             }`}>
-                              {t.status}
+                              {t.id.startsWith('tr_') ? 'Unsynced Local Draft' : t.status}
                             </span>
                             <button
                               type="button"

@@ -106,7 +106,7 @@ export type TransportPricingType =
   | 'per_day' 
   | 'per_trip';
 
-export type TransportStatus = 'published' | 'draft' | 'paused';
+export type TransportStatus = 'published' | 'pending' | 'draft' | 'paused';
 
 export interface TransportCapacity {
   maxPassengers: number;
@@ -189,6 +189,8 @@ export interface TransportOffering {
   images: string[];
   coverImage: string;
   status: TransportStatus;
+  isHostVerified?: boolean;
+  isLocalDraft?: boolean;
   createdAt: string;
   updatedAt: string;
 }

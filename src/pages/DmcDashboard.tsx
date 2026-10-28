@@ -559,8 +559,16 @@ export default function DmcDashboard() {
                 {filteredPackages.map(pkg => (
                   <div key={pkg.id} className="bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-xs flex flex-col justify-between">
                     <div>
-                      <div className="relative h-44 w-full">
-                        <img src={pkg.coverImage} alt={pkg.title} className="w-full h-full object-cover" />
+                      <div className="relative h-44 w-full bg-gray-900">
+                        <img
+                          src={pkg.coverImage || 'https://images.unsplash.com/photo-1547471080-7cc2caa01a7e?auto=format&fit=crop&w=800&q=80'}
+                          alt={pkg.title}
+                          className="w-full h-full object-cover"
+                          onError={(e) => {
+                            (e.currentTarget as HTMLImageElement).src =
+                              'https://images.unsplash.com/photo-1547471080-7cc2caa01a7e?auto=format&fit=crop&w=800&q=80';
+                          }}
+                        />
                         <span className={`absolute top-3 right-3 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider ${
                           pkg.status === 'published'
                             ? 'bg-emerald-500 text-white'

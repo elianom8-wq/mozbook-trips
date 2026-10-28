@@ -21,6 +21,7 @@ import {
 } from '../types/activityTrip';
 import { calculateCommission } from '../config/platformCommission';
 import { OperatorInventoryDebit } from '../types/payment';
+import { checkHostVerificationStatus } from './listingService';
 
 const STORAGE_KEY_ACTIVITIES = 'mozbook_activities_trips';
 const STORAGE_KEY_BOOKINGS = 'mozbook_activity_bookings';
@@ -373,6 +374,8 @@ const INITIAL_ACTIVITIES: ActivityTrip[] = [
   }
 ];
 
+const INITIAL_ACTIVITY_IDS = new Set(INITIAL_ACTIVITIES.map(a => a.id));
+
 // Helper: load local items
 function getLocalActivities(): ActivityTrip[] {
   try {
@@ -417,47 +420,138 @@ function saveLocalBookings(items: ActivityBooking[]) {
   }
 }
 
-/**
- * Fetch all activities & trips with optional filters
- */
-export async function getActivitiesTrips(options?: {
+export interface GetActivitiesTripsOptions {
   type?: ActivityTripType;
   status?: ActivityTripStatus;
   city?: string;
   hostId?: string;
-}): Promise<ActivityTrip[]> {
-  try {
-    // Try Firestore first
-    const coll = collection(db, 'activities_trips');
-    const snapshot = await getDocs(coll);
-    if (!snapshot.empty) {
-      const fsItems: ActivityTrip[] = [];
-      snapshot.forEach(docSnap => {
-        fsItems.push({ id: docSnap.id, ...docSnap.data() } as ActivityTrip);
-      });
-
-      // Filter
-      return applyFilters(fsItems, options);
-    }
-  } catch (err) {
-    console.warn('Firestore fetch failed, falling back to localStorage:', err);
-  }
-
-  // Fallback to local
-  const localItems = getLocalActivities();
-  return applyFilters(localItems, options);
+  includeUnpublished?: boolean;
 }
 
-function applyFilters(
-  items: ActivityTrip[],
-  options?: {
-    type?: ActivityTripType;
-    status?: ActivityTripStatus;
-    city?: string;
-    hostId?: string;
+export interface AuthorizationContext {
+  isCallerAuthorizedAdmin?: boolean;
+  currentUid?: string;
+}
+
+export function isCallerAdmin(user?: { uid?: string; email?: string | null } | null): boolean {
+  if (!user) return false;
+  const email = user.email?.toLowerCase();
+  return email === 'mozbookinfo@gmail.com' || email === 'admin@mozbook.mz';
+}
+
+/**
+ * Fetch all activities & trips with optional filters.
+ *
+ * Architecture Invariants:
+ * 1. Curated baseline activities (INITIAL_ACTIVITIES) and local items are merged
+ *    with Firestore items by ID deduplication (Firestore records take precedence),
+ *    ensuring verified platform experiences remain discoverable across environments
+ *    and are not wiped out when a single partner draft or package is written to Firestore.
+ * 2. Public queries (where hostId is not specified or caller is not authorized)
+ *    are strictly guarded: only published ('published') items may be returned. Drafts ('draft')
+ *    and unapproved submissions ('pending' / 'paused') remain strictly hidden from public-facing views.
+ * 3. Scoped host queries enforce authentication: hosts can see their own drafts and submissions,
+ *    but a third party or competing host querying another hostId can only see published listings.
+ * 4. Admin flag `includeUnpublished: true` is strictly verified against admin email/claims.
+ *    Unauthorized or public callers passing includeUnpublished are safely ignored.
+ */
+export async function getActivitiesTrips(
+  options?: GetActivitiesTripsOptions,
+  authContext?: AuthorizationContext
+): Promise<ActivityTrip[]> {
+  const itemMap = new Map<string, ActivityTrip>();
+
+  const currentUser = auth.currentUser;
+  const isAdmin = authContext?.isCallerAuthorizedAdmin ?? isCallerAdmin(currentUser);
+  const currentUid = authContext?.currentUid ?? currentUser?.uid;
+  const isHostSelfQuery = Boolean(options?.hostId && currentUid && currentUid === options.hostId);
+  const includeUnpublished = Boolean(options?.includeUnpublished && isAdmin);
+
+  try {
+    const coll = collection(db, 'activities_trips');
+    let snapshot;
+
+    if (includeUnpublished) {
+      // Authorized administrator query: reads all documents
+      snapshot = await getDocs(coll);
+    } else if (isHostSelfQuery && options?.hostId) {
+      // Authenticated host inspecting their own listings: reads own items including drafts
+      const q = query(coll, where('hostId', '==', options.hostId));
+      snapshot = await getDocs(q);
+    } else if (options?.hostId) {
+      // Public / third-party query for a host's offerings: strictly published only
+      const q = query(coll, where('hostId', '==', options.hostId), where('status', '==', 'published'));
+      snapshot = await getDocs(q);
+    } else {
+      // General public traveler query: strictly published items only
+      const q = query(coll, where('status', '==', 'published'));
+      snapshot = await getDocs(q);
+    }
+
+    if (!snapshot.empty) {
+      snapshot.forEach(docSnap => {
+        itemMap.set(docSnap.id, { id: docSnap.id, ...docSnap.data() } as ActivityTrip);
+      });
+    }
+  } catch (err) {
+    console.warn('Firestore fetch failed, checking local:', err);
   }
+
+  // 2. Merge baseline curated platform activities and authorized host local drafts
+  // Authoritative rules:
+  // - Firestore documents take absolute precedence over local cache (already in itemMap)
+  // - Local cache items with matching IDs cannot overwrite Firestore records
+  // - Local cache cannot independently authorize a public listing:
+  //   Only platform seed activities (INITIAL_ACTIVITY_IDS) or host self-query drafts can be merged.
+  //   Unpersisted local records are NEVER exposed to public discovery.
+  //   In host self-queries, unpersisted items are explicitly marked as draft and flagged.
+  const localItems = getLocalActivities();
+  localItems.forEach(item => {
+    if (itemMap.has(item.id)) return;
+    if (INITIAL_ACTIVITY_IDS.has(item.id)) {
+      itemMap.set(item.id, item);
+    } else if (isHostSelfQuery && options?.hostId && item.hostId === options.hostId) {
+      itemMap.set(item.id, {
+        ...item,
+        status: 'draft',
+        isLocalDraft: true
+      });
+    }
+  });
+
+  const allItems = Array.from(itemMap.values());
+  return applyFilters(allItems, options, {
+    isCallerAuthorizedAdmin: isAdmin,
+    currentUid
+  });
+}
+
+export function applyFilters(
+  items: ActivityTrip[],
+  options?: GetActivitiesTripsOptions,
+  authContext?: AuthorizationContext
 ): ActivityTrip[] {
   let res = [...items];
+
+  const currentUser = auth.currentUser;
+  const isAdmin = authContext?.isCallerAuthorizedAdmin ?? isCallerAdmin(currentUser);
+  const currentUid = authContext?.currentUid ?? currentUser?.uid;
+  const isSelfHost = Boolean(options?.hostId && currentUid && currentUid === options.hostId);
+  const authorizedToSeeUnpublished = Boolean((options?.includeUnpublished && isAdmin) || isSelfHost);
+
+  // Invariant 1: Public queries and unauthorized callers must NEVER receive
+  // drafts ('draft') or unapproved submissions ('pending' / 'paused').
+  // Passing `includeUnpublished: true` without a verified admin identity is strictly rejected.
+  if (!authorizedToSeeUnpublished) {
+    res = res.filter(i => i.status === 'published');
+  }
+
+  // Invariant 2: Host queries must isolate records to the requested host.
+  // If the requester is NOT that host (and not an admin), they only see the host's published offerings.
+  if (options?.hostId) {
+    res = res.filter(i => i.hostId === options.hostId);
+  }
+
   if (!options) return res;
 
   if (options.type) {
@@ -469,9 +563,7 @@ function applyFilters(
   if (options.city && options.city.toLowerCase() !== 'all') {
     res = res.filter(i => i.city.toLowerCase() === options.city!.toLowerCase());
   }
-  if (options.hostId) {
-    res = res.filter(i => i.hostId === options.hostId);
-  }
+
   return res;
 }
 
@@ -520,37 +612,60 @@ export async function getActivityTripById(id: string): Promise<ActivityTrip | nu
 
 /**
  * Create a new Activity or Trip
+ * Authoritative Firestore write:
+ * - Requires authenticated user
+ * - Queries checkHostVerificationStatus(hostId)
+ * - Auto-publishes ONLY if host is verified and not suspended
+ * - Sets status to 'pending' if host is unverified/pending/rejected
+ * - Throws if host is suspended
+ * - Throws immediately on Firestore persistence failure (no silent false-success fallback)
+ * - Returns the authoritative Firestore record with docRef.id
  */
 export async function createActivityTrip(
   data: Omit<ActivityTrip, 'id' | 'createdAt' | 'updatedAt'>
 ): Promise<ActivityTrip> {
-  const now = new Date().toISOString();
-  let newId = 'act_' + Date.now();
+  const currentUser = auth.currentUser;
+  if (!currentUser) {
+    throw new Error('Authentication required: You must be logged in to create an experience.');
+  }
 
+  const hostId = data.hostId || currentUser.uid;
+  const verifStatus = await checkHostVerificationStatus(hostId);
+  if (verifStatus.isSuspended) {
+    throw new Error('Host account is suspended. Cannot create or publish experiences.');
+  }
+
+  // Automatic publication policy:
+  // If host is verified: eligible listings can be automatically published
+  // If host is not verified (pending, unverified, rejected): status forced to 'pending' or 'draft'
+  let targetStatus: ActivityTripStatus = data.status || 'published';
+  if (targetStatus !== 'draft') {
+    targetStatus = verifStatus.isVerified ? (data.status || 'published') : 'pending';
+  }
+
+  const coll = collection(db, 'activities_trips');
+  const docRef = await addDoc(coll, {
+    ...data,
+    hostId,
+    status: targetStatus,
+    isHostVerified: verifStatus.isVerified,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp()
+  });
+
+  const now = new Date().toISOString();
   const newRecord: ActivityTrip = {
     ...data,
-    id: newId,
+    id: docRef.id,
+    hostId,
+    status: targetStatus,
     createdAt: now,
     updatedAt: now
   };
 
-  try {
-    if (auth.currentUser) {
-      const coll = collection(db, 'activities_trips');
-      const docRef = await addDoc(coll, {
-        ...data,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp()
-      });
-      newRecord.id = docRef.id;
-    }
-  } catch (err) {
-    console.warn('Firestore addDoc failed, saved to local:', err);
-  }
-
   // Update local cache
   const local = getLocalActivities();
-  saveLocalActivities([newRecord, ...local]);
+  saveLocalActivities([newRecord, ...local.filter(i => i.id !== docRef.id)]);
 
   return newRecord;
 }
@@ -562,16 +677,19 @@ export async function updateActivityTrip(
   id: string,
   updates: Partial<ActivityTrip>
 ): Promise<ActivityTrip> {
-  const now = new Date().toISOString();
-  try {
-    const docRef = doc(db, 'activities_trips', id);
-    await updateDoc(docRef, {
-      ...updates,
-      updatedAt: serverTimestamp()
-    });
-  } catch (err) {
-    console.warn('Firestore updateDoc failed, updating local:', err);
+  if (!id) {
+    throw new Error('Activity ID is required for update.');
   }
+  if (id.startsWith('act_')) {
+    throw new Error('Cannot update unsynced local draft in Firestore. Please submit a new listing.');
+  }
+
+  const now = new Date().toISOString();
+  const docRef = doc(db, 'activities_trips', id);
+  await updateDoc(docRef, {
+    ...updates,
+    updatedAt: serverTimestamp()
+  });
 
   const local = getLocalActivities();
   const idx = local.findIndex(i => i.id === id);
@@ -592,11 +710,10 @@ export async function updateActivityTrip(
  * Delete an Activity or Trip
  */
 export async function deleteActivityTrip(id: string): Promise<boolean> {
-  try {
+  if (!id) return false;
+  if (!id.startsWith('act_')) {
     const docRef = doc(db, 'activities_trips', id);
     await deleteDoc(docRef);
-  } catch (err) {
-    console.warn('Firestore delete failed, deleting local:', err);
   }
 
   const local = getLocalActivities();

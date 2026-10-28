@@ -11,8 +11,9 @@ import {
   serverTimestamp,
   orderBy
 } from 'firebase/firestore';
-import { db } from '../firebase';
+import { db, auth } from '../firebase';
 import { TransportOffering } from '../types/transport';
+import { checkHostVerificationStatus } from './listingService';
 
 const COLLECTION = 'activities_trips';
 const STORAGE_KEY_TRANSPORT = 'mozbook_transport_services';
@@ -41,36 +42,47 @@ function saveLocalTransports(items: TransportOffering[]) {
 export async function createTransportService(
   transportData: Omit<TransportOffering, 'id' | 'createdAt' | 'updatedAt'>
 ): Promise<TransportOffering> {
-  const now = new Date().toISOString();
-  let newId = 'tr_' + Date.now();
+  const currentUser = auth.currentUser;
+  if (!currentUser) {
+    throw new Error('Authentication required: You must be logged in to create a transport service.');
+  }
+
+  const hostId = transportData.hostId || currentUser.uid;
+  const verifStatus = await checkHostVerificationStatus(hostId);
+  if (verifStatus.isSuspended) {
+    throw new Error('Host account is suspended. Cannot create or publish transport services.');
+  }
+
+  let targetStatus = transportData.status || 'published';
+  if (targetStatus !== 'draft') {
+    targetStatus = verifStatus.isVerified ? (transportData.status || 'published') : 'pending';
+  }
 
   const payload: Omit<TransportOffering, 'id'> = {
     ...transportData,
+    hostId,
+    status: targetStatus,
     type: 'transport',
     currency: 'MZN',
-    createdAt: now,
-    updatedAt: now
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
   };
 
-  try {
-    const coll = collection(db, COLLECTION);
-    const docRef = await addDoc(coll, {
-      ...payload,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp()
-    });
-    newId = docRef.id;
-  } catch (err) {
-    console.warn('Firestore addDoc transport failed, fallback to local storage:', err);
-  }
+  const coll = collection(db, COLLECTION);
+  const docRef = await addDoc(coll, {
+    ...payload,
+    isHostVerified: verifStatus.isVerified,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp()
+  });
 
   const newOffering: TransportOffering = {
-    id: newId,
+    id: docRef.id,
     ...payload
   };
 
   const local = getLocalTransports();
-  saveLocalTransports([newOffering, ...local.filter(t => t.id !== newId)]);
+  saveLocalTransports([newOffering, ...local.filter(t => t.id !== docRef.id)]);
 
   return newOffering;
 }
@@ -82,18 +94,18 @@ export async function updateTransportService(
   id: string,
   updates: Partial<TransportOffering>
 ): Promise<boolean> {
-  const now = new Date().toISOString();
-
-  try {
-    const docRef = doc(db, COLLECTION, id);
-    await updateDoc(docRef, {
-      ...updates,
-      updatedAt: serverTimestamp()
-    });
-  } catch (err) {
-    console.warn('Firestore updateDoc transport failed, updating local storage:', err);
+  if (!id) return false;
+  if (id.startsWith('tr_')) {
+    throw new Error('Cannot update unsynced local transport in Firestore.');
   }
 
+  const docRef = doc(db, COLLECTION, id);
+  await updateDoc(docRef, {
+    ...updates,
+    updatedAt: serverTimestamp()
+  });
+
+  const now = new Date().toISOString();
   const local = getLocalTransports();
   const idx = local.findIndex(t => t.id === id);
   if (idx >= 0) {

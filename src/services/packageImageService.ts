@@ -43,7 +43,8 @@ export function validateImageFile(file: File): ImageValidationResult {
   const isAllowedMime = ALLOWED_IMAGE_MIME_TYPES.includes(mimeType);
   const isAllowedExt = ALLOWED_IMAGE_EXTENSIONS.includes(extension);
 
-  if (!isAllowedMime && !isAllowedExt) {
+  // Require both valid MIME type and allowed extension for strict file safety
+  if (!isAllowedMime || !isAllowedExt) {
     return {
       valid: false,
       error: `Unsupported format for "${file.name}". Only JPG, JPEG, PNG, and WebP images are supported.`
@@ -93,16 +94,45 @@ export function sanitizeFileName(originalName: string): string {
   return clean || 'package_image.jpg';
 }
 
+export const UPLOAD_TIMEOUT_MS = 25000; // 25 seconds timeout
+
 /**
- * Uploads a package image with progress tracking.
- * Tries direct Firebase Storage first, then falls back to the server upload boundary.
+ * Formats low-level Firebase Storage errors into actionable messages for DMC partners.
+ */
+export function formatStorageError(err: any): string {
+  if (!err) return 'Image upload failed. Please try again.';
+
+  const code = (err.code || err.status || '').toString().toLowerCase();
+  const msg = (err.message || '').toString();
+
+  if (code.includes('bucket-not-found') || code === '404' || msg.includes('404') || err.status_ === 404) {
+    return 'Firebase Storage bucket is not found or not activated for this project. Please ensure Firebase Storage is enabled in the Firebase Console for project "hip-graph-485101-k7".';
+  }
+  if (code.includes('unauthorized') || code.includes('permission-denied') || code === '403' || msg.includes('403')) {
+    return 'Permission denied by Firebase Storage security rules. Please ensure you are authenticated as the authorized DMC partner owning this package.';
+  }
+  if (code.includes('canceled') || msg.includes('timed out') || msg.includes('timeout')) {
+    return 'Image upload timed out. The storage server did not respond in time. Please check your network connection and retry.';
+  }
+  if (code.includes('quota-exceeded')) {
+    return 'Storage quota exceeded for this Firebase project.';
+  }
+  if (code.includes('unauthenticated')) {
+    return 'Authentication required. Please sign in before uploading images.';
+  }
+  return msg || 'Image upload failed. Please verify your connection and try again.';
+}
+
+/**
+ * Uploads a package image with real progress tracking and timeout enforcement.
+ * Enforces partner ownership scoping: dmc_packages/{userId}/{packageId}/{fileName}
  */
 export async function uploadPackageImage(
   file: File,
   userId: string,
   packageId: string,
   onProgress?: (percent: number) => void,
-  idToken?: string
+  _idToken?: string
 ): Promise<UploadImageResult> {
   // 1. Client-side fast validation
   const validation = validateImageFile(file);
@@ -120,33 +150,47 @@ export async function uploadPackageImage(
   const storagePath = `dmc_packages/${userId}/${packageId}/${timestamp}_${cleanName}`;
   const mimeType = file.type || 'image/jpeg';
 
-  // 2. Try Firebase Storage directly
-  try {
-    const storageRef = ref(storage, storagePath);
-    const uploadTask = uploadBytesResumable(storageRef, file, {
-      contentType: mimeType,
-      customMetadata: {
-        userId,
-        packageId,
-        uploadedAt: new Date().toISOString()
-      }
-    });
+  const storageRef = ref(storage, storagePath);
+  const uploadTask = uploadBytesResumable(storageRef, file, {
+    contentType: mimeType,
+    customMetadata: {
+      userId,
+      packageId,
+      uploadedAt: new Date().toISOString()
+    }
+  });
 
+  let timeoutTimer: any;
+  let lastProgress = 0;
+
+  try {
     const downloadUrl = await new Promise<string>((resolve, reject) => {
+      timeoutTimer = setTimeout(() => {
+        try {
+          uploadTask.cancel();
+        } catch (_) {}
+        reject(new Error('Image upload timed out after 25 seconds. The storage service did not respond.'));
+      }, UPLOAD_TIMEOUT_MS);
+
       uploadTask.on(
         'state_changed',
         (snapshot) => {
           if (snapshot.totalBytes > 0) {
-            const progress = Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100);
-            onProgress?.(progress);
+            const rawPercent = Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100);
+            const clamped = Math.max(lastProgress, Math.min(99, rawPercent));
+            lastProgress = clamped;
+            onProgress?.(clamped);
           }
         },
         (error) => {
+          clearTimeout(timeoutTimer);
           reject(error);
         },
         async () => {
+          clearTimeout(timeoutTimer);
           try {
             const url = await getDownloadURL(uploadTask.snapshot.ref);
+            onProgress?.(100);
             resolve(url);
           } catch (urlErr) {
             reject(urlErr);
@@ -154,8 +198,6 @@ export async function uploadPackageImage(
         }
       );
     });
-
-    onProgress?.(100);
 
     return {
       id: uniqueId,
@@ -166,58 +208,11 @@ export async function uploadPackageImage(
       mimeType,
       uploadedAt: new Date().toISOString()
     };
-  } catch (storageErr) {
-    console.warn('[packageImageService] Direct Firebase Storage upload failed, falling back to server boundary:', storageErr);
-  }
-
-  // 3. Fallback: Upload via Server-Side Boundary /api/dmc/packages/upload-image
-  try {
-    onProgress?.(25);
-    const base64Data = await fileToBase64(file);
-    onProgress?.(50);
-
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json'
-    };
-    if (idToken) {
-      headers['Authorization'] = `Bearer ${idToken}`;
-    }
-
-    const res = await fetch('/api/dmc/packages/upload-image', {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        packageId,
-        fileName: cleanName,
-        mimeType,
-        fileSize: file.size,
-        base64Data,
-        partnerId: userId
-      })
-    });
-
-    onProgress?.(80);
-
-    if (!res.ok) {
-      const errJson = await res.json().catch(() => ({}));
-      throw new Error(errJson.error || `Server upload failed with status ${res.status}`);
-    }
-
-    const data = await res.json();
-    onProgress?.(100);
-
-    return {
-      id: uniqueId,
-      url: data.url,
-      storagePath: data.storagePath || storagePath,
-      fileName: cleanName,
-      fileSize: file.size,
-      mimeType,
-      uploadedAt: new Date().toISOString()
-    };
-  } catch (serverErr: any) {
-    console.error('[packageImageService] Both client and server uploads failed:', serverErr);
-    throw new Error(serverErr.message || 'Image upload failed. Please verify your connection and try again.');
+  } catch (err: any) {
+    clearTimeout(timeoutTimer);
+    const formattedError = formatStorageError(err);
+    console.error('[packageImageService] Firebase Storage upload error:', formattedError, err);
+    throw new Error(formattedError);
   }
 }
 
@@ -227,7 +222,7 @@ export async function uploadPackageImage(
 export async function deletePackageImage(
   storagePath: string,
   userId: string,
-  idToken?: string
+  _idToken?: string
 ): Promise<boolean> {
   if (!storagePath) return false;
 
@@ -237,46 +232,14 @@ export async function deletePackageImage(
     return false;
   }
 
-  // 1. Try Firebase Storage deletion
   try {
     const storageRef = ref(storage, storagePath);
     await deleteObject(storageRef);
     return true;
   } catch (err) {
-    console.warn('[packageImageService] Direct Firebase Storage delete failed:', err);
-  }
-
-  // 2. Fallback to server endpoint
-  try {
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json'
-    };
-    if (idToken) {
-      headers['Authorization'] = `Bearer ${idToken}`;
-    }
-
-    const res = await fetch('/api/dmc/packages/delete-image', {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ storagePath, partnerId: userId })
-    });
-    return res.ok;
-  } catch (err) {
-    console.error('[packageImageService] Server delete failed:', err);
+    console.warn('[packageImageService] Firebase Storage delete failed:', err);
     return false;
   }
-}
-
-/**
- * Helper to convert browser File to Base64 string for server transfer.
- */
-export function fileToBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.readAsDataURL(file);
-    reader.onload = () => resolve(reader.result as string);
-    reader.onerror = (error) => reject(error);
-  });
 }
 
 // -------------------------------------------------------------

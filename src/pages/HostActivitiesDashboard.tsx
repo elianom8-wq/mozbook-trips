@@ -122,7 +122,7 @@ export default function HostActivitiesDashboard() {
   const loadData = async () => {
     setIsLoading(true);
     try {
-      const allItems = await getActivitiesTrips();
+      const allItems = user?.uid ? await getActivitiesTrips({ hostId: user.uid }) : [];
       setItems(allItems);
 
       const allBookings = await getHostBookings();

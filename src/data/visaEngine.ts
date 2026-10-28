@@ -174,8 +174,20 @@ export const NATIONALITIES: NationalityEntry[] = [
   { key: 'zimbabwe', country_name: 'Zimbabwe', nationality_name: 'Zimbabwean', country_code: 'ZW', flag: '🇿🇼', is_in_seed: true }
 ].sort((a, b) => a.country_name.localeCompare(b.country_name));
 
-export const BORDER_POSTS = visaRulesJson.border_visa_information.authorized_entry_points;
+export interface BorderPostItem {
+  name: string;
+  type: string;
+}
+
+export interface BorderPostProvinceGroup {
+  province: string;
+  posts: BorderPostItem[];
+}
+
+export const BORDER_POSTS: string[] = visaRulesJson.border_visa_information.authorized_entry_points;
 export const BORDER_POST_INFO = visaRulesJson.border_visa_information;
+export const BORDER_POST_PROVINCE_GROUPS: BorderPostProvinceGroup[] = visaRulesJson.border_visa_information.province_groupings || [];
+
 
 export const OFFICIAL_SOURCE = {
   name: visaRulesJson.source.name,

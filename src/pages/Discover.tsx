@@ -319,7 +319,7 @@ export default function Discover() {
   // 2. Fetch Activities & Experiences
   useEffect(() => {
     let isMounted = true;
-    getActivitiesTrips()
+    getActivitiesTrips({ status: 'published' })
       .then((acts) => {
         if (isMounted) {
           setActivities(acts || []);
@@ -451,6 +451,7 @@ export default function Discover() {
   // Section 4: Featured Experiences (Admin-curated / verified activities)
   const featuredExperiences = useMemo(() => {
     return activities
+      .filter((a) => a.status === 'published')
       .filter((a) => {
         if (selectedProvince === 'all') return true;
         return matchesProvince(undefined, a.city, a.city);
@@ -528,6 +529,7 @@ export default function Discover() {
 
     // 2. Gather valid active offers from Experiences (Activities & Trips)
     const experienceDeals: DealItem[] = activities
+      .filter((a) => a.status === 'published')
       .filter((a) => {
         if (selectedProvince === 'all') return true;
         return matchesProvince(undefined, a.city, a.city);

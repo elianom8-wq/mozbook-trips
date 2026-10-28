@@ -25,7 +25,11 @@ import {
   Share2,
   Bookmark,
   Check,
-  Info
+  Info,
+  Images,
+  X,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { TravelPackage } from '../types/dmc';
@@ -44,6 +48,10 @@ export default function TravelPackageDetails() {
   const [selectedDate, setSelectedDate] = useState<string>('');
   const [adults, setAdults] = useState<number>(2);
   const [includeSingleSupplement, setIncludeSingleSupplement] = useState<boolean>(false);
+
+  // Gallery Modal / Lightbox State
+  const [isGalleryModalOpen, setIsGalleryModalOpen] = useState(false);
+  const [activePhotoIndex, setActivePhotoIndex] = useState(0);
 
   // Booking Modal State
   const [showBookingModal, setShowBookingModal] = useState(false);
@@ -257,17 +265,92 @@ export default function TravelPackageDetails() {
           </div>
         </div>
 
-        {/* Hero Gallery */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 h-[320px] md:h-[420px] rounded-3xl overflow-hidden">
-          <div className="md:col-span-2 h-full">
-            <img src={pkg.coverImage} alt={pkg.title} className="w-full h-full object-cover" />
-          </div>
-          <div className="hidden md:grid grid-rows-2 gap-3 h-full">
-            {pkg.images?.slice(1, 3).map((img, idx) => (
-              <img key={idx} src={img} alt={`${pkg.title} ${idx}`} className="w-full h-full object-cover" />
-            )) || <div className="bg-gray-100"></div>}
-          </div>
-        </div>
+        {/* Hero Gallery with Fallback and Lightbox Trigger */}
+        {(() => {
+          const galleryList: string[] = [];
+          if (pkg.coverImage) galleryList.push(pkg.coverImage);
+          if (pkg.images?.length) {
+            pkg.images.forEach(img => {
+              if (img && !galleryList.includes(img)) galleryList.push(img);
+            });
+          }
+          const secondaryImages = galleryList.filter(img => img !== pkg.coverImage).slice(0, 2);
+          const totalCount = galleryList.length;
+
+          return (
+            <div className="relative rounded-3xl overflow-hidden border border-gray-200 bg-gray-900 shadow-xs">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-2 h-[320px] md:h-[420px]">
+                <div
+                  className="md:col-span-2 h-full cursor-pointer relative group overflow-hidden"
+                  onClick={() => {
+                    setActivePhotoIndex(0);
+                    setIsGalleryModalOpen(true);
+                  }}
+                >
+                  <img
+                    src={pkg.coverImage || galleryList[0]}
+                    alt={pkg.title}
+                    className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-102"
+                    onError={(e) => {
+                      (e.currentTarget as HTMLImageElement).src =
+                        'https://images.unsplash.com/photo-1547471080-7cc2caa01a7e?auto=format&fit=crop&w=1200&q=80';
+                    }}
+                  />
+                  <div className="absolute inset-0 bg-black/10 group-hover:bg-black/0 transition-colors" />
+                </div>
+
+                <div className="hidden md:grid grid-rows-2 gap-2 h-full">
+                  {secondaryImages.length > 0 ? (
+                    secondaryImages.map((img, idx) => (
+                      <div
+                        key={idx}
+                        className="h-full cursor-pointer relative group overflow-hidden bg-gray-800"
+                        onClick={() => {
+                          const targetIdx = galleryList.indexOf(img);
+                          setActivePhotoIndex(targetIdx >= 0 ? targetIdx : 0);
+                          setIsGalleryModalOpen(true);
+                        }}
+                      >
+                        <img
+                          src={img}
+                          alt={`${pkg.title} photo ${idx + 2}`}
+                          className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-102"
+                          onError={(e) => {
+                            (e.currentTarget as HTMLImageElement).src =
+                              'https://images.unsplash.com/photo-1516426122078-c23e76319801?auto=format&fit=crop&w=800&q=80';
+                          }}
+                        />
+                        <div className="absolute inset-0 bg-black/10 group-hover:bg-black/0 transition-colors" />
+                      </div>
+                    ))
+                  ) : (
+                    <>
+                      <div className="bg-gray-100 flex items-center justify-center text-gray-400 text-xs font-semibold p-4 text-center">
+                        Mozambique Safari Experience
+                      </div>
+                      <div className="bg-gray-100 flex items-center justify-center text-gray-400 text-xs font-semibold p-4 text-center">
+                        Bespoke Tour Package
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {/* View all photos button */}
+              <button
+                type="button"
+                onClick={() => {
+                  setActivePhotoIndex(0);
+                  setIsGalleryModalOpen(true);
+                }}
+                className="absolute bottom-4 right-4 inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white/95 hover:bg-white text-gray-900 text-xs font-bold shadow-lg transition-all backdrop-blur-xs cursor-pointer border border-gray-200/80"
+              >
+                <Images size={15} className="text-[#009A60]" />
+                <span>View all {totalCount} {totalCount === 1 ? 'photo' : 'photos'}</span>
+              </button>
+            </div>
+          );
+        })()}
 
         {/* Two-Column Layout */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-10">
@@ -742,6 +825,119 @@ export default function TravelPackageDetails() {
               </form>
             )}
           </div>
+        </div>
+      )}
+
+      {/* Photo Gallery Lightbox Modal */}
+      {isGalleryModalOpen && pkg && (
+        <div
+          className="fixed inset-0 z-50 bg-black/95 flex flex-col justify-between p-4 sm:p-6 backdrop-blur-md"
+          role="dialog"
+          aria-modal="true"
+        >
+          {/* Header */}
+          <div className="flex items-center justify-between text-white pb-3 border-b border-white/10">
+            <div>
+              <h3 className="text-sm sm:text-base font-bold line-clamp-1">{pkg.title}</h3>
+              <p className="text-xs text-white/60">
+                Photo {activePhotoIndex + 1} of {
+                  (() => {
+                    const list: string[] = [];
+                    if (pkg.coverImage) list.push(pkg.coverImage);
+                    if (pkg.images) pkg.images.forEach(i => { if (i && !list.includes(i)) list.push(i); });
+                    return list.length || 1;
+                  })()
+                }
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsGalleryModalOpen(false)}
+              className="p-2 rounded-xl bg-white/10 hover:bg-white/20 text-white transition-colors cursor-pointer"
+              aria-label="Close photo gallery"
+            >
+              <X size={20} />
+            </button>
+          </div>
+
+          {/* Main Photo Carousel */}
+          {(() => {
+            const list: string[] = [];
+            if (pkg.coverImage) list.push(pkg.coverImage);
+            if (pkg.images) pkg.images.forEach(i => { if (i && !list.includes(i)) list.push(i); });
+            if (list.length === 0) list.push('https://images.unsplash.com/photo-1547471080-7cc2caa01a7e?auto=format&fit=crop&w=1200&q=80');
+            const currentImg = list[activePhotoIndex] || list[0];
+
+            return (
+              <div className="relative flex-1 flex items-center justify-center my-4 overflow-hidden">
+                <img
+                  src={currentImg}
+                  alt={`${pkg.title} - ${activePhotoIndex + 1}`}
+                  className="max-h-[70vh] max-w-full object-contain rounded-2xl shadow-2xl"
+                  onError={(e) => {
+                    (e.currentTarget as HTMLImageElement).src =
+                      'https://images.unsplash.com/photo-1547471080-7cc2caa01a7e?auto=format&fit=crop&w=1200&q=80';
+                  }}
+                />
+
+                {/* Left / Right Nav Arrows */}
+                {list.length > 1 && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setActivePhotoIndex((activePhotoIndex - 1 + list.length) % list.length)}
+                      className="absolute left-2 sm:left-4 p-3 rounded-full bg-black/60 hover:bg-black/90 text-white border border-white/20 transition-all cursor-pointer"
+                      aria-label="Previous photo"
+                    >
+                      <ChevronLeft size={22} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setActivePhotoIndex((activePhotoIndex + 1) % list.length)}
+                      className="absolute right-2 sm:right-4 p-3 rounded-full bg-black/60 hover:bg-black/90 text-white border border-white/20 transition-all cursor-pointer"
+                      aria-label="Next photo"
+                    >
+                      <ChevronRight size={22} />
+                    </button>
+                  </>
+                )}
+              </div>
+            );
+          })()}
+
+          {/* Thumbnails Strip */}
+          {(() => {
+            const list: string[] = [];
+            if (pkg.coverImage) list.push(pkg.coverImage);
+            if (pkg.images) pkg.images.forEach(i => { if (i && !list.includes(i)) list.push(i); });
+
+            if (list.length <= 1) return null;
+
+            return (
+              <div className="flex items-center justify-center gap-2 overflow-x-auto py-2 px-4 max-w-4xl mx-auto">
+                {list.map((img, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => setActivePhotoIndex(idx)}
+                    className={`h-16 w-20 shrink-0 rounded-lg overflow-hidden border-2 transition-all cursor-pointer ${
+                      activePhotoIndex === idx ? 'border-[#009A60] scale-105' : 'border-transparent opacity-60 hover:opacity-100'
+                    }`}
+                  >
+                    <img
+                      src={img}
+                      alt={`Thumbnail ${idx + 1}`}
+                      className="w-full h-full object-cover"
+                      onError={(e) => {
+                        (e.currentTarget as HTMLImageElement).src =
+                          'https://images.unsplash.com/photo-1547471080-7cc2caa01a7e?auto=format&fit=crop&w=400&q=80';
+                      }}
+                    />
+                  </button>
+                ))}
+              </div>
+            );
+          })()}
         </div>
       )}
 

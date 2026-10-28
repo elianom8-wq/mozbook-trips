@@ -266,6 +266,8 @@ export interface Listing {
   operatingModels?: OperatingModelId[];
   settings?: SettingId[];
   classificationStatus?: ClassificationStatus;
+  status?: 'published' | 'pending' | 'draft' | 'archived' | 'paused' | 'suspended';
+  isLocalDraft?: boolean;
   createdAt?: any;
   updatedAt?: any;
 }
@@ -349,18 +351,95 @@ export function sanitizeFirestorePayload<T>(value: T): T {
   return result as T;
 }
 
+export interface HostVerificationStatusInfo {
+  isVerified: boolean;
+  isSuspended: boolean;
+  status: 'verified' | 'pending' | 'rejected' | 'suspended' | 'unverified';
+}
+
+export async function checkHostVerificationStatus(userId: string): Promise<HostVerificationStatusInfo> {
+  if (!userId) {
+    return { isVerified: false, isSuspended: false, status: 'unverified' };
+  }
+  try {
+    let verificationStatus: string | undefined;
+    let isSuspended = false;
+
+    // 1. Authoritative check in users collection
+    const userDocRef = doc(db, 'users', userId);
+    const userSnap = await getDoc(userDocRef);
+    if (userSnap.exists()) {
+      const udata = userSnap.data();
+      if (udata.accountStatus === 'suspended' || udata.verificationStatus === 'suspended' || udata.isSuspended === true) {
+        return { isVerified: false, isSuspended: true, status: 'suspended' };
+      }
+      if (udata.verificationStatus) {
+        verificationStatus = udata.verificationStatus;
+      }
+    }
+
+    // 2. Authoritative check in verifications collection
+    if (verificationStatus !== 'verified') {
+      const vq = query(collection(db, VERIFICATIONS_COLLECTION), where('userId', '==', userId));
+      const vsnap = await getDocs(vq);
+      if (!vsnap.empty) {
+        const sorted = vsnap.docs
+          .map(d => d.data())
+          .sort((a: any, b: any) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
+        const latest = sorted[0];
+        if (latest.status === 'suspended') {
+          return { isVerified: false, isSuspended: true, status: 'suspended' };
+        }
+        if (latest.status === 'verified') {
+          verificationStatus = 'verified';
+        } else if (!verificationStatus && latest.status) {
+          verificationStatus = latest.status;
+        }
+      }
+    }
+
+    const finalStatus = (verificationStatus as any) || 'unverified';
+    return {
+      isVerified: finalStatus === 'verified',
+      isSuspended: finalStatus === 'suspended' || isSuspended,
+      status: finalStatus
+    };
+  } catch (err) {
+    console.warn('Error checking host verification status:', err);
+    return { isVerified: false, isSuspended: false, status: 'unverified' };
+  }
+}
+
 export const createListing = async (listing: Omit<Listing, 'id' | 'createdAt'>) => {
   const path = COLLECTION;
   try {
+    const hostId = listing.hostId || auth.currentUser?.uid;
+    let targetStatus = listing.status || 'published';
+    let isHostVerified = Boolean(listing.isHostVerified);
+
+    if (hostId) {
+      const statusInfo = await checkHostVerificationStatus(hostId);
+      if (statusInfo.isSuspended) {
+        throw new Error('Host account is suspended. Cannot create or publish listings.');
+      }
+      isHostVerified = statusInfo.isVerified;
+      if (targetStatus !== 'draft') {
+        targetStatus = statusInfo.isVerified ? (listing.status || 'published') : 'pending';
+      }
+    }
+
     const payload = sanitizeFirestorePayload({
       ...listing,
+      hostId: hostId || listing.hostId,
+      status: targetStatus,
+      isHostVerified,
       createdAt: serverTimestamp(),
     });
     const docRef = await addDoc(collection(db, path), payload);
     return docRef.id;
   } catch (error) {
     handleFirestoreError(error, OperationType.CREATE, path);
-    return null;
+    throw error;
   }
 };
 
@@ -1127,6 +1206,37 @@ export const syncHostListingsVerification = async (
         updatedCount++;
       }
     });
+
+    // Also sync activities_trips for this host
+    try {
+      const actSnap = await getDocs(query(collection(db, 'activities_trips'), where('hostId', '==', userId)));
+      if (!actSnap.empty) {
+        actSnap.docs.forEach((docSnap) => {
+          const actData = docSnap.data();
+          const docRef = doc(db, 'activities_trips', docSnap.id);
+
+          if (isHostVerified) {
+            const updates: Record<string, any> = {
+              isHostVerified: true,
+              updatedAt: serverTimestamp()
+            };
+            if (!actData.status || actData.status === 'pending' || actData.status === 'pending_approval' || actData.status === 'pending_verification') {
+              updates.status = 'published';
+            }
+            batch.update(docRef, updates);
+            updatedCount++;
+          } else {
+            batch.update(docRef, {
+              isHostVerified: false,
+              updatedAt: serverTimestamp()
+            });
+            updatedCount++;
+          }
+        });
+      }
+    } catch (actErr) {
+      console.warn('Note: activities_trips sync query fallback:', actErr);
+    }
 
     if (updatedCount > 0) {
       await batch.commit();

@@ -661,7 +661,7 @@ export const adminService = {
   async getAllActivities(): Promise<AdminActivityTrip[]> {
     try {
       const [items, bookingsSnap, usersSnap, verifsSnap] = await Promise.all([
-        getActivitiesTrips(),
+        getActivitiesTrips({ includeUnpublished: true }),
         getDocs(collection(db, 'activity_bookings')).catch(() => ({ docs: [], forEach: () => {} })),
         getDocs(collection(db, 'users')).catch(() => ({ docs: [], forEach: () => {} })),
         getDocs(collection(db, 'verifications')).catch(() => ({ docs: [], forEach: () => {} })),

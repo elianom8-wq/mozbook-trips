@@ -8,5 +8,8 @@ const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 export const auth = getAuth(app);
 export const storage = getStorage(app);
+// Fast-fail upload retry timeout (10s instead of default 10min) to prevent indefinite hanging
+storage.maxUploadRetryTime = 10000;
+storage.maxOperationRetryTime = 10000;
 
 export default app;
