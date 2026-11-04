@@ -19,9 +19,11 @@ import {
   ArrowLeft, 
   Loader2, 
   AlertCircle,
-  Plus,
-  Trash2,
-  Image as ImageIcon,
+  Clock,
+  Eye,
+  Plus, 
+  Trash2, 
+  Image as ImageIcon, 
   ShieldCheck,
   Moon,
   Tag,
@@ -52,49 +54,40 @@ import {
 import { 
   ResidenceType, 
   createListing, 
-  NearbyPlace,
-  LabeledImage,
-  getUserVerification,
-  HostVerification,
-  SpecialOffer,
-  saveListingSpecialOffer,
-  LodgeAccommodation,
-  calculateTotalLodgeUnits
+  NearbyPlace, 
+  LabeledImage, 
+  getUserVerification, 
+  HostVerification, 
+  SpecialOffer, 
+  saveListingSpecialOffer, 
+  LodgeAccommodation, 
+  calculateTotalLodgeUnits,
+  PhysicalAddress,
+  formatPhysicalAddress
 } from '../services/listingService';
 import { RESIDENCE_TYPES } from '../data/residenceTypes';
 import { AMENITIES_LIST } from '../data/amenities';
 import GpsLocationPicker from '../components/GpsLocationPicker';
-import NearbyPlacesManager from '../components/NearbyPlacesManager';
 import SpecialOffersSection from '../components/SpecialOffersSection';
 import LodgeAccommodationManager from '../components/LodgeAccommodationManager';
 import AccommodationUnitManager from '../components/AccommodationUnitManager';
 import {
   CANONICAL_ACCOMMODATION_TYPES,
+  CANONICAL_PARENT_CATEGORIES,
   OPERATING_MODELS,
   SETTINGS,
   mapLegacyResidenceType,
   mapCanonicalToLegacyResidenceType,
   getCanonicalAccommodationType,
+  getParentCategoryForType,
+  getCanonicalTypesByCategory,
+  isValidCanonicalCategoryTypePair,
   CanonicalAccommodationTypeId,
   OperatingModelId,
   SettingId,
   ClassificationStatus
 } from '../data/canonicalAccommodationTaxonomy';
 import { calculateCommission, MOZBOOK_COMMISSION_PERCENT, PARTNER_SHARE_PERCENT } from '../config/platformCommission';
-
-// Icon resolver for residence types
-const getResidenceIcon = (iconName: string) => {
-  switch (iconName) {
-    case 'Home': return Home;
-    case 'Building': return Building;
-    case 'Building2': return Building2;
-    case 'Trees': return Trees;
-    case 'LayoutGrid': return LayoutGrid;
-    case 'Palmtree': return Palmtree;
-    case 'Tent': return Tent;
-    default: return Home;
-  }
-};
 
 // Icon resolver for amenities
 const getAmenityIcon = (iconName: string) => {
@@ -147,8 +140,9 @@ export default function CreateListing() {
   // 1. Residence Type (Legacy Backwards Compatibility - Always preserved)
   const [residenceType, setResidenceType] = useState<ResidenceType>('beachfront residence');
 
-  // Stage 3D-B: Canonical Accommodation Taxonomy
+  // Stage 3D-B: Canonical Accommodation Taxonomy & Parent Category Filter
   const [canonicalType, setCanonicalType] = useState<CanonicalAccommodationTypeId>('BEACH_HOUSE');
+  const [selectedParentCategory, setSelectedParentCategory] = useState<string>('Private & Self-Contained Accommodation');
   const [selectedOperatingModels, setSelectedOperatingModels] = useState<OperatingModelId[]>(['SELF_CATERING']);
   const [selectedSettings, setSelectedSettings] = useState<SettingId[]>(['BEACHFRONT', 'COASTAL']);
   const [classificationStatus, setClassificationStatus] = useState<ClassificationStatus>('VALID_MATCH');
@@ -180,7 +174,7 @@ export default function CreateListing() {
     return nextMonth.toISOString().split('T')[0];
   });
 
-  // 5. GPS & Geography
+  // 5. GPS & Physical Address
   const [coordinates, setCoordinates] = useState({
     lat: -25.9692,
     lng: 32.5732, // Default: Maputo, Mozambique
@@ -188,6 +182,16 @@ export default function CreateListing() {
   const [city, setCity] = useState('Maputo');
   const [province, setProvince] = useState('Maputo Cidade');
   const [address, setAddress] = useState('Avenida Marginal Beachfront, Polana');
+  const [country, setCountry] = useState('Mozambique');
+  const [neighborhood, setNeighborhood] = useState('Polana');
+  const [street, setStreet] = useState('Avenida Marginal');
+  const [buildingNumber, setBuildingNumber] = useState('');
+  const [buildingName, setBuildingName] = useState('');
+  const [postalCode, setPostalCode] = useState('');
+  const [directionsLandmark, setDirectionsLandmark] = useState('');
+  const [useGps, setUseGps] = useState(true);
+  const [usePhysicalAddress, setUsePhysicalAddress] = useState(true);
+  const [pinSource, setPinSource] = useState<'gps' | 'map_pin' | 'search' | 'default'>('default');
 
   // 6. Amenities
   const [selectedAmenities, setSelectedAmenities] = useState<string[]>([
@@ -218,30 +222,21 @@ export default function CreateListing() {
   const [cameraModalOpen, setCameraModalOpen] = useState(false);
   const fileUploadRef = useRef<HTMLInputElement | null>(null);
 
-  // 8. What's Nearby
-  const [nearbyPlaces, setNearbyPlaces] = useState<NearbyPlace[]>([
-    {
-      id: 'np-1',
-      name: 'Dhow Maputo Sunset Lounge & Restaurant',
-      category: 'restaurant',
-      distance: '5 min walk',
-      description: 'Stunning bay vistas and fresh grilled Mozambican prawns.'
-    },
-    {
-      id: 'np-2',
-      name: 'Costa do Sol Beachfront & Fish Market',
-      category: 'activity',
-      distance: '8 min walk',
-      description: 'Lively coastal promenade with ocean swimming and local culture.'
-    }
-  ]);
+  // Nearby Places (preserved for draft/existing listing compatibility)
+  const [nearbyPlaces, setNearbyPlaces] = useState<NearbyPlace[]>([]);
 
   // Host Verification Status
   const [hostVerification, setHostVerification] = useState<HostVerification | null>(null);
 
-  // Submission State
+  // Submission & Post-save State
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [savedListingModal, setSavedListingModal] = useState<{
+    isOpen: boolean;
+    listingId: string;
+    title: string;
+    isPendingVerification: boolean;
+  } | null>(null);
 
   // User-Scoped Listing Draft Management (Fix A & Post-Discard Resilience)
   const STAY_LISTING_DRAFT_KEY = 'stay_listing_draft';
@@ -261,6 +256,7 @@ export default function CreateListing() {
   const getDraftPayload = () => ({
     residenceType,
     canonicalType,
+    selectedParentCategory,
     selectedOperatingModels,
     selectedSettings,
     classificationStatus,
@@ -278,6 +274,16 @@ export default function CreateListing() {
     city,
     province,
     address,
+    country,
+    neighborhood,
+    street,
+    buildingNumber,
+    buildingName,
+    postalCode,
+    directionsLandmark,
+    useGps,
+    usePhysicalAddress,
+    pinSource,
     selectedAmenities,
     photos,
     nearbyPlaces,
@@ -335,7 +341,21 @@ export default function CreateListing() {
     const existing = getUserScopedDraft<any>(user.uid, STAY_LISTING_DRAFT_KEY);
     if (existing) {
       if (existing.residenceType) setResidenceType(existing.residenceType);
-      if (existing.canonicalType) setCanonicalType(existing.canonicalType);
+      if (existing.canonicalType) {
+        setCanonicalType(existing.canonicalType);
+        const derivedCat = existing.selectedParentCategory || getParentCategoryForType(existing.canonicalType);
+        if (derivedCat) setSelectedParentCategory(derivedCat);
+      } else if (existing.residenceType) {
+        const mapping = mapLegacyResidenceType(existing.residenceType);
+        if (mapping) {
+          setCanonicalType(mapping.canonicalTypeId);
+          const derivedCat = getParentCategoryForType(mapping.canonicalTypeId);
+          if (derivedCat) setSelectedParentCategory(derivedCat);
+        }
+      }
+      if (existing.selectedParentCategory) {
+        setSelectedParentCategory(existing.selectedParentCategory);
+      }
       if (existing.selectedOperatingModels) setSelectedOperatingModels(existing.selectedOperatingModels);
       if (existing.selectedSettings) setSelectedSettings(existing.selectedSettings);
       if (existing.classificationStatus) setClassificationStatus(existing.classificationStatus);
@@ -353,6 +373,16 @@ export default function CreateListing() {
       if (existing.city) setCity(existing.city);
       if (existing.province) setProvince(existing.province);
       if (existing.address) setAddress(existing.address);
+      if (existing.country) setCountry(existing.country);
+      if (existing.neighborhood !== undefined) setNeighborhood(existing.neighborhood);
+      if (existing.street !== undefined) setStreet(existing.street);
+      if (existing.buildingNumber !== undefined) setBuildingNumber(existing.buildingNumber);
+      if (existing.buildingName !== undefined) setBuildingName(existing.buildingName);
+      if (existing.postalCode !== undefined) setPostalCode(existing.postalCode);
+      if (existing.directionsLandmark !== undefined) setDirectionsLandmark(existing.directionsLandmark);
+      if (typeof existing.useGps === 'boolean') setUseGps(existing.useGps);
+      if (typeof existing.usePhysicalAddress === 'boolean') setUsePhysicalAddress(existing.usePhysicalAddress);
+      if (existing.pinSource) setPinSource(existing.pinSource);
       if (Array.isArray(existing.selectedAmenities)) setSelectedAmenities(existing.selectedAmenities);
       if (Array.isArray(existing.photos) && existing.photos.length > 0) setPhotos(existing.photos);
       if (Array.isArray(existing.nearbyPlaces) && existing.nearbyPlaces.length > 0) setNearbyPlaces(existing.nearbyPlaces);
@@ -413,6 +443,7 @@ export default function CreateListing() {
     user?.uid,
     residenceType,
     canonicalType,
+    selectedParentCategory,
     selectedOperatingModels,
     selectedSettings,
     classificationStatus,
@@ -521,6 +552,10 @@ export default function CreateListing() {
     if (mapping) {
       setCanonicalType(mapping.canonicalTypeId);
       setClassificationStatus(mapping.classificationStatus);
+      const cat = getParentCategoryForType(mapping.canonicalTypeId);
+      if (cat) {
+        setSelectedParentCategory(cat);
+      }
       if (mapping.suggestedSettings) {
         setSelectedSettings(mapping.suggestedSettings);
       }
@@ -603,11 +638,31 @@ export default function CreateListing() {
     }
   };
 
+  const handleSelectParentCategory = (newCategory: string) => {
+    setSelectedParentCategory(newCategory);
+    // If the currently selected canonicalType does not belong to the new category,
+    // update to the first valid canonical type in that category. Otherwise preserve it!
+    if (!isValidCanonicalCategoryTypePair(newCategory, canonicalType)) {
+      const availableTypes = getCanonicalTypesByCategory(newCategory);
+      if (availableTypes.length > 0) {
+        const nextType = availableTypes[0].backend_id;
+        setCanonicalType(nextType);
+        setClassificationStatus('VALID_MATCH');
+        const legacyFallback = mapCanonicalToLegacyResidenceType(nextType);
+        setResidenceType(legacyFallback);
+      }
+    }
+  };
+
   const handleSelectCanonicalType = (newCanonicalId: CanonicalAccommodationTypeId) => {
     setCanonicalType(newCanonicalId);
     setClassificationStatus('VALID_MATCH');
     const legacyFallback = mapCanonicalToLegacyResidenceType(newCanonicalId);
     setResidenceType(legacyFallback);
+    const cat = getParentCategoryForType(newCanonicalId);
+    if (cat && cat !== selectedParentCategory) {
+      setSelectedParentCategory(cat);
+    }
   };
 
   const handleToggleOperatingModel = (modelId: OperatingModelId) => {
@@ -718,6 +773,23 @@ export default function CreateListing() {
       return;
     }
 
+    if (!city.trim()) {
+      setSubmitError('Please provide a city or municipality for your property.');
+      return;
+    }
+
+    if (!country.trim()) {
+      setSubmitError('Please provide a country for your property.');
+      return;
+    }
+
+    const hasCoordinates = Boolean(coordinates && (coordinates.lat !== 0 || coordinates.lng !== 0));
+    const hasAddress = Boolean(city.trim() && (province.trim() || street.trim() || address.trim()));
+    if (!hasCoordinates && !hasAddress) {
+      setSubmitError('Please provide either GPS coordinates on the map or a physical street address.');
+      return;
+    }
+
     if (specialOffer?.enabled && specialOffer.isSeasonal && specialOffer.seasonalTag === 'Other' && !specialOffer.customSeasonName?.trim()) {
       setSubmitError('Please provide a custom seasonal name for your special offer.');
       return;
@@ -727,12 +799,33 @@ export default function CreateListing() {
     setSubmitError(null);
 
     try {
+      const structuredAddressDetails: PhysicalAddress = {
+        country: country.trim() || 'Mozambique',
+        province: province.trim(),
+        city: city.trim(),
+        neighborhood: neighborhood.trim() || undefined,
+        street: street.trim() || undefined,
+        buildingNumber: buildingNumber.trim() || undefined,
+        buildingName: buildingName.trim() || undefined,
+        postalCode: postalCode.trim() || undefined,
+        directionsLandmark: directionsLandmark.trim() || undefined,
+      };
+
+      const computedLocationType: 'gps' | 'address' | 'both' = (useGps && usePhysicalAddress)
+        ? 'both'
+        : useGps
+          ? 'gps'
+          : 'address';
+
+      const formattedLocation = formatPhysicalAddress(structuredAddressDetails) || address || `${city}, ${province}`;
+
       const listingData = {
         title: title.trim(),
         description: description.trim() || `${residenceType} in ${city}, ${province}.`,
-        location: `${city}, ${province}`,
+        location: formattedLocation,
         residenceType,
         canonicalType,
+        canonicalCategory: selectedParentCategory,
         operatingModels: selectedOperatingModels,
         settings: selectedSettings,
         classificationStatus,
@@ -747,9 +840,20 @@ export default function CreateListing() {
         hostPhoto: user.photoURL || undefined,
         isHostVerified: hostVerification?.status === 'verified',
         category: residenceType,
-        city,
-        province,
-        country: 'Mozambique',
+        city: city.trim(),
+        province: province.trim(),
+        country: country.trim() || 'Mozambique',
+        neighborhood: neighborhood.trim() || undefined,
+        street: street.trim() || undefined,
+        buildingNumber: buildingNumber.trim() || undefined,
+        buildingName: buildingName.trim() || undefined,
+        postalCode: postalCode.trim() || undefined,
+        directionsLandmark: directionsLandmark.trim() || undefined,
+        addressDetails: structuredAddressDetails,
+        locationType: computedLocationType,
+        hasGpsLocation: Boolean(useGps && hasCoordinates),
+        hasPhysicalAddress: Boolean(usePhysicalAddress && city.trim()),
+        pinSource,
         availableFrom,
         availableTo,
         dates: `${availableFrom} to ${availableTo}`,
@@ -778,12 +882,22 @@ export default function CreateListing() {
             console.warn('Failed to save promotional record separately:', offerErr);
           }
         }
-        navigate(`/listing/${newId}`);
+
+        if (hostVerification?.status === 'verified') {
+          navigate(`/listing/${newId}`);
+        } else {
+          setSavedListingModal({
+            isOpen: true,
+            listingId: newId,
+            title: title.trim(),
+            isPendingVerification: true
+          });
+        }
       } else {
         setSubmitError('Failed to publish listing. Please try again.');
       }
     } catch (err: any) {
-      setSubmitError(err?.message || 'Error occurred while publishing listing.');
+      setSubmitError(err?.message || 'Error occurred while saving listing.');
     } finally {
       setIsSubmitting(false);
     }
@@ -885,6 +999,36 @@ export default function CreateListing() {
 
       <main className="max-w-5xl mx-auto px-4 sm:px-6 pt-8">
         <form onSubmit={handleSubmit} className="space-y-8">
+          {/* Requirement 1 & 2: Approval Pending Notification Banner */}
+          {(location.state?.approvalPending || hostVerification?.status === 'pending') && (
+            <div className="p-4 sm:p-5 bg-amber-50/90 border-2 border-amber-300 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm animate-fade-in">
+              <div className="flex items-start gap-3.5">
+                <div className="w-10 h-10 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center shrink-0 mt-0.5 border border-amber-300">
+                  <Clock size={22} className="text-amber-700" />
+                </div>
+                <div>
+                  <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 bg-amber-200 text-amber-900 rounded-md text-[11px] font-black uppercase tracking-wider mb-1">
+                    <ShieldCheck size={13} className="text-amber-800" />
+                    <span>Approval Pending · Documents Awaiting Review</span>
+                  </div>
+                  <h3 className="text-base font-black text-gray-950 tracking-tight">
+                    Full Accommodation Setup Enabled While Pending
+                  </h3>
+                  <p className="text-xs text-amber-950/85 mt-1 leading-relaxed max-w-2xl">
+                    Your verification documents are awaiting review by our Trust & Safety operations team. You can add your house, apartment, lodge, or chalet information, photographs, nightly rates, room counts, amenities, and house rules now. Your completed listing will be saved and <strong>automatically published</strong> as soon as your account is approved.
+                  </p>
+                </div>
+              </div>
+              <Link
+                to="/host/verify"
+                className="shrink-0 inline-flex items-center gap-1.5 px-4 py-2 bg-amber-200 hover:bg-amber-300 text-amber-950 text-xs font-bold rounded-xl transition-colors border border-amber-400/50 shadow-2xs"
+              >
+                <ShieldCheck size={14} />
+                <span>Check Verification Status</span>
+              </Link>
+            </div>
+          )}
+
           {/* Draft Restored Banner (Fix A) */}
           {restoredDraftNotice?.active && (
             <div className="p-4 sm:p-5 bg-emerald-50 border-2 border-emerald-300 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm animate-fade-in">
@@ -966,97 +1110,66 @@ export default function CreateListing() {
             </Link>
           </div>
 
-          {/* Section 1: Residence Type Selection */}
-          <div className="bg-white p-6 sm:p-8 rounded-2xl border border-gray-200 shadow-xs space-y-4">
+          {/* Section 1: Accommodation Selection */}
+          <div className="bg-white p-6 sm:p-8 rounded-2xl border border-gray-200 shadow-xs space-y-6">
             <div>
               <span className="text-xs font-bold tracking-wider text-[#009A60] uppercase">
-                Step 1 of 7
+                Step 1 of 6
               </span>
               <h2 className="text-xl font-bold text-gray-900 mt-1">
                 Which best describes your residence?
               </h2>
               <p className="text-sm text-gray-500 mt-1">
-                Select from standard residential properties, urban city homes, country escapes, or unique holiday stays so travelers can refine their search.
+                Select your accommodation category and property type so travelers can easily discover your stay.
               </p>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5 pt-2">
-              {RESIDENCE_TYPES.map((type) => {
-                const isSelected = residenceType === type.id;
-                const Icon = getResidenceIcon(type.iconName);
-                return (
-                  <button
-                    key={type.id}
-                    type="button"
-                    onClick={() => handleSelectResidenceType(type.id)}
-                    className={`p-4 rounded-xl border text-left transition-all relative flex flex-col justify-between ${
-                      isSelected
-                        ? 'border-[#009A60] ring-2 ring-[#009A60]/20 bg-[#e6f7f0]/40 shadow-sm'
-                        : 'border-gray-200 bg-white hover:border-gray-300 hover:bg-gray-50/50'
-                    }`}
-                  >
-                    <div>
-                      <div
-                        className={`w-11 h-11 rounded-xl flex items-center justify-center mb-3 ${
-                          isSelected
-                            ? 'bg-[#009A60] text-white shadow-xs'
-                            : 'bg-gray-100 text-gray-700'
-                        }`}
-                      >
-                        <Icon size={22} />
-                      </div>
-                      <h3 className="font-bold text-gray-900 text-sm sm:text-base capitalize">
-                        {type.title}
-                      </h3>
-                      <p className="text-xs text-gray-500 mt-1 leading-relaxed line-clamp-3">
-                        {type.subtitle}
-                      </p>
-                    </div>
-
-                    {isSelected && (
-                      <div className="mt-3 flex items-center gap-1 text-xs font-semibold text-[#009A60]">
-                        <CheckCircle2 size={15} /> Selected
-                      </div>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* Property Refinement Section */}
-            <div className="pt-6 mt-6 border-t border-gray-100 space-y-6">
-              <div>
-                <h3 className="text-base font-bold text-gray-900">
-                  Refine your property
-                </h3>
-              </div>
-
-              {/* Accommodation Classification Dropdown */}
+            {/* Category & Accommodation Type Dropdowns */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Dropdown 1: Category */}
               <div>
                 <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1.5">
-                  Accommodation Classification
+                  Category
+                </label>
+                <select
+                  value={selectedParentCategory}
+                  onChange={(e) => handleSelectParentCategory(e.target.value)}
+                  data-testid="category-select"
+                  className="w-full px-3.5 py-2.5 bg-white border border-gray-300 rounded-xl text-sm font-medium text-gray-800 focus:outline-hidden focus:ring-2 focus:ring-[#009A60] focus:border-[#009A60]"
+                >
+                  {CANONICAL_PARENT_CATEGORIES.map(category => (
+                    <option key={category} value={category}>
+                      {category}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Dropdown 2: Accommodation Type */}
+              <div>
+                <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1.5">
+                  Accommodation Type
                 </label>
                 <select
                   value={canonicalType}
                   onChange={(e) => handleSelectCanonicalType(e.target.value as CanonicalAccommodationTypeId)}
+                  data-testid="accommodation-type-select"
                   className="w-full px-3.5 py-2.5 bg-white border border-gray-300 rounded-xl text-sm font-medium text-gray-800 focus:outline-hidden focus:ring-2 focus:ring-[#009A60] focus:border-[#009A60]"
                 >
-                  {Array.from(new Set(CANONICAL_ACCOMMODATION_TYPES.map(t => t.parent_category))).map(category => (
-                    <optgroup key={category} label={category}>
-                      {CANONICAL_ACCOMMODATION_TYPES.filter(t => t.parent_category === category).map(t => (
-                        <option key={t.backend_id} value={t.backend_id}>
-                          {t.display_name} — {t.description.slice(0, 55)}...
-                        </option>
-                      ))}
-                    </optgroup>
+                  {getCanonicalTypesByCategory(selectedParentCategory).map(t => (
+                    <option key={t.backend_id} value={t.backend_id}>
+                      {t.display_name}
+                    </option>
                   ))}
                 </select>
-                {getCanonicalAccommodationType(canonicalType) && (
-                  <p className="text-xs text-emerald-800 bg-emerald-50/60 border border-emerald-200/60 rounded-lg p-2.5 mt-2">
-                    <strong>{getCanonicalAccommodationType(canonicalType)?.display_name}:</strong> {getCanonicalAccommodationType(canonicalType)?.description}
-                  </p>
-                )}
               </div>
+            </div>
+
+            {getCanonicalAccommodationType(canonicalType) && (
+              <p className="text-xs text-emerald-800 bg-emerald-50/60 border border-emerald-200/60 rounded-lg p-3">
+                <strong>{getCanonicalAccommodationType(canonicalType)?.display_name}:</strong> {getCanonicalAccommodationType(canonicalType)?.description}
+              </p>
+            )}
 
               {/* Operating / Meal Models */}
               <div className="space-y-2">
@@ -1122,7 +1235,7 @@ export default function CreateListing() {
                   })}
                 </div>
               </div>
-            </div>
+
             {/* Multi-Unit Accommodation Option (Stage 3E Generalization) */}
             <div className="pt-4 border-t border-gray-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div>
@@ -1179,7 +1292,7 @@ export default function CreateListing() {
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
               <div>
                 <span className="text-xs font-bold tracking-wider text-[#009A60] uppercase">
-                  Step 2 of 7
+                  Step 2 of 6
                 </span>
                 <h2 className="text-xl font-bold text-gray-900 mt-1">
                   What amenities does your residence offer?
@@ -1230,13 +1343,13 @@ export default function CreateListing() {
           <div className="bg-white p-6 sm:p-8 rounded-2xl border border-gray-200 shadow-xs space-y-4">
             <div>
               <span className="text-xs font-bold tracking-wider text-[#009A60] uppercase">
-                Step 3 of 7
+                Step 3 of 6
               </span>
               <h2 className="text-xl font-bold text-gray-900 mt-1">
-                Location & GPS Pinpoint
+                Property Location & Physical Address
               </h2>
               <p className="text-sm text-gray-500 mt-1">
-                Pinpoint the exact GPS location of the residence so guests know the precise city, province, and neighborhood.
+                Identify your property using GPS location, a map pin, a manual physical address, or both.
               </p>
             </div>
 
@@ -1245,43 +1358,40 @@ export default function CreateListing() {
               city={city}
               province={province}
               address={address}
+              country={country}
+              neighborhood={neighborhood}
+              street={street}
+              buildingNumber={buildingNumber}
+              buildingName={buildingName}
+              postalCode={postalCode}
+              directionsLandmark={directionsLandmark}
+              useGps={useGps}
+              usePhysicalAddress={usePhysicalAddress}
+              pinSource={pinSource}
               onChange={(data) => {
-                setCoordinates(data.coordinates);
-                setCity(data.city);
-                setProvince(data.province);
-                setAddress(data.address);
+                if (data.coordinates) setCoordinates(data.coordinates);
+                if (data.city !== undefined) setCity(data.city);
+                if (data.province !== undefined) setProvince(data.province);
+                if (data.address !== undefined) setAddress(data.address);
+                if (data.country !== undefined) setCountry(data.country);
+                if (data.neighborhood !== undefined) setNeighborhood(data.neighborhood);
+                if (data.street !== undefined) setStreet(data.street);
+                if (data.buildingNumber !== undefined) setBuildingNumber(data.buildingNumber);
+                if (data.buildingName !== undefined) setBuildingName(data.buildingName);
+                if (data.postalCode !== undefined) setPostalCode(data.postalCode);
+                if (data.directionsLandmark !== undefined) setDirectionsLandmark(data.directionsLandmark);
+                if (data.useGps !== undefined) setUseGps(data.useGps);
+                if (data.usePhysicalAddress !== undefined) setUsePhysicalAddress(data.usePhysicalAddress);
+                if (data.pinSource !== undefined) setPinSource(data.pinSource);
               }}
             />
           </div>
 
-          {/* Section 4: What's Nearby? (Community suggestions & confirmation) */}
-          <div className="bg-white p-6 sm:p-8 rounded-2xl border border-gray-200 shadow-xs space-y-4">
-            <div>
-              <span className="text-xs font-bold tracking-wider text-[#009A60] uppercase">
-                Step 4 of 7
-              </span>
-              <h2 className="text-xl font-bold text-gray-900 mt-1">
-                What's Nearby?
-              </h2>
-              <p className="text-sm text-gray-500 mt-1">
-                Add nearby restaurants, activities, beaches, and local sights. When you confirm or add a custom spot, it becomes instantly available to the community suggestions list for {city || 'this location'}!
-              </p>
-            </div>
-
-            <NearbyPlacesManager
-              city={city}
-              province={province}
-              coordinates={coordinates}
-              nearbyPlaces={nearbyPlaces}
-              onChange={setNearbyPlaces}
-            />
-          </div>
-
-          {/* Section 5: Dates Available, Minimum Nights & 15% Host Service Fee */}
+          {/* Section 4: Dates Available, Minimum Nights & 15% Host Service Fee */}
           <div className="bg-white p-6 sm:p-8 rounded-2xl border border-gray-200 shadow-xs space-y-6">
             <div>
               <span className="text-xs font-bold tracking-wider text-[#009A60] uppercase">
-                Step 5 of 7
+                Step 4 of 6
               </span>
               <h2 className="text-xl font-bold text-gray-900 mt-1">
                 Dates Available, Minimum Nights & Pricing
@@ -1436,8 +1546,9 @@ export default function CreateListing() {
             </div>
           </div>
 
-          {/* Section 6: Special Offers & Seasonal Pricing (NEW) */}
+          {/* Section 5: Special Offers & Seasonal Pricing */}
           <SpecialOffersSection
+            stepBadge="Step 5 of 6"
             basePrice={price}
             offer={specialOffer}
             currency={currency}
@@ -1445,11 +1556,11 @@ export default function CreateListing() {
             isEditing={false}
           />
 
-          {/* Section 7: Details & Photos with Naming / Room Labels */}
+          {/* Section 6: Details & Photos with Naming / Room Labels */}
           <div className="bg-white p-6 sm:p-8 rounded-2xl border border-gray-200 shadow-xs space-y-6">
             <div>
               <span className="text-xs font-bold tracking-wider text-[#009A60] uppercase">
-                Step 7 of 7
+                Step 6 of 6
               </span>
               <h2 className="text-xl font-bold text-gray-900 mt-1">
                 Residence Details & Named Photos
@@ -1675,18 +1786,75 @@ export default function CreateListing() {
               {isSubmitting ? (
                 <>
                   <Loader2 size={18} className="animate-spin" />
-                  <span>Publishing Listing...</span>
+                  <span>Saving Accommodation...</span>
                 </>
-              ) : (
+              ) : hostVerification?.status === 'verified' ? (
                 <>
                   <CheckCircle2 size={18} />
                   <span>Publish MozBook Listing</span>
+                </>
+              ) : (
+                <>
+                  <Clock size={18} />
+                  <span>Save Accommodation (Pending Approval)</span>
                 </>
               )}
             </button>
           </div>
         </form>
       </main>
+
+      {/* Requirement 1, 2, 3: Saved Listing Confirmation Modal for Pending Hosts */}
+      {savedListingModal?.isOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-fade-in">
+          <div className="bg-white rounded-3xl max-w-lg w-full p-6 sm:p-8 shadow-2xl border border-gray-100 text-center space-y-5 animate-scale-in">
+            <div className="w-16 h-16 rounded-2xl bg-amber-100 text-amber-800 flex items-center justify-center mx-auto border-2 border-amber-300">
+              <Clock size={32} className="text-amber-700" />
+            </div>
+
+            <div className="space-y-2">
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-amber-100 text-amber-900 rounded-full text-xs font-bold border border-amber-300">
+                <ShieldCheck size={14} className="text-amber-700" />
+                <span>Saved · Pending Host Verification</span>
+              </div>
+              <h3 className="text-xl sm:text-2xl font-black text-gray-900 tracking-tight">
+                Accommodation Saved Successfully!
+              </h3>
+              <p className="text-xs sm:text-sm text-gray-600 leading-relaxed max-w-md mx-auto">
+                Your property <strong className="text-gray-900">"{savedListingModal.title}"</strong> has been saved and linked to your host profile.
+              </p>
+              <div className="bg-amber-50 rounded-2xl p-4 text-xs text-amber-950 text-left border border-amber-200 space-y-1.5">
+                <p className="font-bold flex items-center gap-1.5">
+                  <CheckCircle2 size={14} className="text-[#009A60]" />
+                  <span>Automatic Publication Guaranteed:</span>
+                </p>
+                <p className="text-gray-600 leading-relaxed">
+                  While your documents are being reviewed, this listing is held as pending and hidden from guest searches. Once your host verification is approved, your listing will automatically go live without you needing to do anything further.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-col sm:flex-row items-center gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => navigate(`/listing/${savedListingModal.listingId}`)}
+                className="w-full sm:flex-1 py-3 px-4 bg-gray-900 hover:bg-black text-white text-xs font-bold rounded-xl transition-colors flex items-center justify-center gap-1.5"
+              >
+                <Eye size={14} />
+                <span>Preview Listing</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => navigate('/partner/dashboard?tab=accommodations')}
+                className="w-full sm:flex-1 py-3 px-4 bg-[#009A60] hover:bg-[#008250] text-white text-xs font-bold rounded-xl transition-colors flex items-center justify-center gap-1.5 shadow-sm"
+              >
+                <Home size={14} />
+                <span>Partner Dashboard</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* In-app Camera Modal with Once-off Permission Solicitation */}
       {cameraModalOpen && (

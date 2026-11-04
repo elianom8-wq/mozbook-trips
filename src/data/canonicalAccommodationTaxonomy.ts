@@ -1063,3 +1063,60 @@ export function mapCanonicalToLegacyResidenceType(canonicalId?: string): LegacyR
   }
   return 'normal residence';
 }
+
+/**
+ * All 11 Canonical Parent Categories in standard order
+ */
+export const CANONICAL_PARENT_CATEGORIES: readonly string[] = [
+  'Hotels & Traditional Lodging',
+  'Hotels & Resorts',
+  'Specialist Accommodation',
+  'Independent & Small Accommodation',
+  'Budget & Social Accommodation',
+  'Private & Self-Contained Accommodation',
+  'Rural & Nature Accommodation',
+  'Lodges & Nature Accommodation',
+  'Community & Sustainable Accommodation',
+  'Camping & Tented Accommodation',
+  'Camping & Outdoor Accommodation'
+] as const;
+
+/**
+ * Returns the parent category for a given canonical accommodation type ID.
+ */
+export function getParentCategoryForType(canonicalTypeId?: string): string | undefined {
+  if (!canonicalTypeId) return undefined;
+  const match = CANONICAL_ACCOMMODATION_TYPES.find(t => t.backend_id === canonicalTypeId);
+  return match?.parent_category;
+}
+
+/**
+ * Returns all canonical accommodation types belonging to a specific parent category.
+ * If no category or an empty/all filter is supplied, returns all canonical types.
+ */
+export function getCanonicalTypesByCategory(parentCategory?: string): readonly CanonicalAccommodationType[] {
+  if (!parentCategory || parentCategory === 'all') {
+    return CANONICAL_ACCOMMODATION_TYPES;
+  }
+  return CANONICAL_ACCOMMODATION_TYPES.filter(t => t.parent_category === parentCategory);
+}
+
+/**
+ * Validates whether a given canonical accommodation type belongs to the specified parent category.
+ */
+export function isValidCanonicalCategoryTypePair(parentCategory?: string, canonicalTypeId?: string): boolean {
+  if (!parentCategory || !canonicalTypeId) return false;
+  if (parentCategory === 'all') {
+    return CANONICAL_ACCOMMODATION_TYPES.some(t => t.backend_id === canonicalTypeId);
+  }
+  const match = CANONICAL_ACCOMMODATION_TYPES.find(t => t.backend_id === canonicalTypeId);
+  return Boolean(match && match.parent_category === parentCategory);
+}
+
+/**
+ * Type guard for CanonicalAccommodationTypeId
+ */
+export function isCanonicalAccommodationTypeId(id?: string): id is CanonicalAccommodationTypeId {
+  if (!id) return false;
+  return CANONICAL_ACCOMMODATION_TYPES.some(t => t.backend_id === id);
+}

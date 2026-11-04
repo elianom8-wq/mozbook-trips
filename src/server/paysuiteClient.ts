@@ -92,7 +92,8 @@ export async function requestPaySuitePayment(
   // Build request payload using ONLY documented OpenAPI fields
   const payload: Record<string, any> = {
     amount: Math.round(params.amount),
-    reference: params.reference.substring(0, 50) // Enforce PaySuite 50-character limit
+    // PaySuite strictly requires reference to contain only letters and numbers (no hyphens or symbols)
+    reference: params.reference.replace(/[^a-zA-Z0-9]/g, '').substring(0, 50) || `MB${Date.now()}`
   };
 
   if (params.description) {
@@ -391,6 +392,31 @@ export async function listPaySuiteRefunds(): Promise<PaySuiteRefundResponse[]> {
   }));
 }
 
+// Authoritative Deployed Production Backend Domain (Cloud Run Ingress)
+export const DEPLOYED_PRODUCTION_DOMAIN = 'https://ais-pre-yndx2tyrfrmr7fjpucr3wb-285674361792.europe-west2.run.app';
+export const PAYSUITE_WEBHOOK_ROUTE = '/api/webhooks/paysuite';
+
+/**
+ * Returns the authoritative publicly accessible URL of the MozBook backend.
+ * Uses APP_URL if injected by the Cloud Run environment, otherwise falls back to
+ * the production Cloud Run deployed ingress domain.
+ */
+export function getProductionAppUrl(): string {
+  const envUrl = process.env.APP_URL?.trim();
+  if (envUrl && envUrl !== 'MY_APP_URL' && !envUrl.includes('localhost')) {
+    return envUrl.replace(/\/+$/, '');
+  }
+  return DEPLOYED_PRODUCTION_DOMAIN;
+}
+
+/**
+ * Returns the canonical HTTPS PaySuite webhook URL for merchant dashboard registration
+ * and per-intent webhook notifications.
+ */
+export function getProductionWebhookUrl(): string {
+  return `${getProductionAppUrl()}${PAYSUITE_WEBHOOK_ROUTE}`;
+}
+
 /**
  * Validates the PaySuite Webhook HMAC-SHA256 signature against the raw request body.
  *
@@ -415,7 +441,11 @@ export function verifyPaySuiteWebhookSignature(
     return false;
   }
 
-  const cleanSignature = signatureHeader.trim().toLowerCase();
+  let cleanSignature = signatureHeader.trim().toLowerCase();
+  // Strip optional 'sha256=' prefix if provided by standard webhook senders
+  if (cleanSignature.startsWith('sha256=')) {
+    cleanSignature = cleanSignature.substring(7).trim();
+  }
 
   try {
     const hmac = crypto.createHmac('sha256', secret.trim());
@@ -435,4 +465,5 @@ export function verifyPaySuiteWebhookSignature(
     return false;
   }
 }
+
 

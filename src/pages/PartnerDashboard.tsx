@@ -897,14 +897,14 @@ export default function PartnerDashboard() {
                   <span>Verification Suspended · Document Expired</span>
                 </span>
               ) : verification?.status === 'verified' ? (
-                <span className="px-3 py-1 rounded-full bg-emerald-100 text-[#008250] text-xs font-bold flex items-center gap-1">
-                  <CheckCircle2 size={13} />
-                  <span>Verified Partner</span>
+                <span className="px-3 py-1 rounded-full bg-emerald-100 text-[#008250] text-xs font-black flex items-center gap-1.5 border border-emerald-300 shadow-2xs">
+                  <CheckCircle2 size={14} className="text-emerald-700" />
+                  <span>Approved — Your Listing Is Live</span>
                 </span>
               ) : verification?.status === 'pending' ? (
-                <span className="px-3 py-1 rounded-full bg-amber-100 text-amber-800 text-xs font-bold flex items-center gap-1">
-                  <Clock size={13} />
-                  <span>Verification Pending Review</span>
+                <span className="px-3 py-1 rounded-full bg-amber-100 text-amber-900 text-xs font-black flex items-center gap-1.5 border border-amber-300 shadow-2xs">
+                  <Clock size={14} className="text-amber-700" />
+                  <span>Approval Pending · Awaiting Review</span>
                 </span>
               ) : (
                 <Link
@@ -1701,6 +1701,21 @@ export default function PartnerDashboard() {
                         <span className="absolute top-3 left-3 bg-black/70 backdrop-blur-xs text-white text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-lg">
                           {listing.residenceType || 'Property'}
                         </span>
+                        {listing.status === 'published' ? (
+                          <span className="absolute top-3 right-3 bg-emerald-600/95 backdrop-blur-xs text-white text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-lg flex items-center gap-1 shadow-sm">
+                            <CheckCircle2 size={11} />
+                            <span>Live on MozBook</span>
+                          </span>
+                        ) : listing.status === 'draft' ? (
+                          <span className="absolute top-3 right-3 bg-slate-700/90 backdrop-blur-xs text-white text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-lg flex items-center gap-1 shadow-sm">
+                            <span>Incomplete Draft</span>
+                          </span>
+                        ) : (
+                          <span className="absolute top-3 right-3 bg-amber-600/95 backdrop-blur-xs text-white text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-lg flex items-center gap-1 shadow-sm">
+                            <Clock size={11} />
+                            <span>Pending Approval</span>
+                          </span>
+                        )}
                         {listing.accommodations && listing.accommodations.length > 0 && (
                           <span className="absolute bottom-3 left-3 bg-emerald-950/80 text-emerald-300 text-[10px] font-bold px-2 py-0.5 rounded shadow-2xs border border-emerald-400/30">
                             {listing.accommodations.length} Units Managed

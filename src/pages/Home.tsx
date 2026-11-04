@@ -62,7 +62,7 @@ const CATEGORIES = [
   { id: 'outdoor residence', label: 'Outdoor Glamping', icon: Tent },
 ];
 
-const MOCK_LISTINGS: Listing[] = [
+export const MOCK_LISTINGS: Listing[] = [
   {
     id: 'mock-1',
     title: 'Modern Cliffside Oceanfront Villa & Infinity Pool',

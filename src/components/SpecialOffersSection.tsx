@@ -28,6 +28,7 @@ interface SpecialOffersSectionProps {
   onChange: (offer: SpecialOffer | null) => void;
   onDeleteOffer?: () => void;
   isEditing?: boolean;
+  stepBadge?: string;
 }
 
 const SEASONAL_PRESETS = [
@@ -58,7 +59,8 @@ export default function SpecialOffersSection({
   currency = 'MZN',
   onChange,
   onDeleteOffer,
-  isEditing = false
+  isEditing = false,
+  stepBadge
 }: SpecialOffersSectionProps) {
   // 1. Toggle: Yes / No (Default: No)
   const [hasOffer, setHasOffer] = useState<boolean>(() => {
@@ -245,7 +247,7 @@ export default function SpecialOffersSection({
         <div>
           <div className="flex items-center gap-2">
             <span className="text-xs font-bold tracking-wider text-[#009A60] uppercase">
-              Special Offers & Pricing
+              {stepBadge || 'Special Offers & Pricing'}
             </span>
             {hasOffer && (
               <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide ${

@@ -36,12 +36,22 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.uid == userId;
     }
 
-    function isAdmin() {
+    function isMasterAdmin() {
+      return isAuthenticated() && (
+        request.auth.token.email == 'mozbookinfo@gmail.com' &&
+        request.auth.token.email_verified == true
+      );
+    }
+
+    function isSubAdmin() {
       return isAuthenticated() && (
         request.auth.token.get('role', '') == 'admin' ||
-        request.auth.token.email == 'mozbookinfo@gmail.com' ||
-        (request.auth.token.email is string && request.auth.token.email.matches('(?i)^mozbookinfo@gmail\\.com$'))
+        exists(/databases/$(database)/documents/admin_profiles/$(request.auth.uid))
       );
+    }
+
+    function isAdmin() {
+      return isMasterAdmin() || isSubAdmin();
     }
     
     function isValidEmail(email) {
@@ -93,7 +103,8 @@ service cloud.firestore {
 
     // Listings Rules
     match /listings/{listingId} {
-      allow read: if true; // Publicly readable
+      allow read: if (resource.data.status == 'published') ||
+        (isAuthenticated() && (resource.data.hostId == request.auth.uid || isAdmin()));
       allow create: if isAuthenticated() && isValidListing(request.resource.data) &&
         (request.resource.data.status != 'published' || isVerifiedHost(request.auth.uid) || isAdmin());
       allow update, delete: if isAuthenticated() && (
@@ -106,8 +117,20 @@ service cloud.firestore {
     // Special Offers & Seasonal Pricing
     match /special_offers/{offerId} {
       allow read: if true; // Publicly readable for active deals
-      allow create: if isAuthenticated() && request.resource.data.hostId == request.auth.uid;
-      allow update, delete: if isAuthenticated() && resource.data.hostId == request.auth.uid;
+      allow create: if isAuthenticated() && 
+        request.resource.data.hostId == request.auth.uid &&
+        request.resource.data.listingId is string &&
+        exists(/databases/$(database)/documents/listings/$(request.resource.data.listingId)) &&
+        (get(/databases/$(database)/documents/listings/$(request.resource.data.listingId)).data.hostId == request.auth.uid || isAdmin());
+      allow update: if isAuthenticated() && (
+        isAdmin() ||
+        (resource.data.hostId == request.auth.uid &&
+         request.resource.data.hostId == resource.data.hostId &&
+         request.resource.data.listingId == resource.data.listingId)
+      );
+      allow delete: if isAuthenticated() && (
+        resource.data.hostId == request.auth.uid || isAdmin()
+      );
     }
 
     // Community Places Rules (Crowdsourced nearby spots)
@@ -307,26 +330,40 @@ service cloud.firestore {
     }
 
     // Atomic Inventory Slot Controls (Prompt 28C - Part 4)
+    // Server-authoritative via Firebase Admin SDK; direct client access denied except admin inspection
     match /inventory_experience_slots/{slotId} {
-      allow read: if true;
-      allow write: if isAdmin();
+      allow read, write: if isAdmin();
     }
 
     match /inventory_stay_slots/{slotId} {
-      allow read: if true;
-      allow write: if isAdmin();
+      allow read, write: if isAdmin();
     }
 
-    // Administrator Audit Logs Rules
-    // Only verified administrators can read or create logs.
-    // If createdAt is provided in the document, it must match request.time (server timestamp).
-    // Historical and client-generated timestamp strings are validated, updates and deletes are permanently forbidden.
+    // Administrator Profiles (Stage 2: Authorization Foundation)
+    // - Sub-admins and guests CANNOT create, update, or delete profiles.
+    // - Only Master Admin can create, modify, or assign permissions in admin_profiles.
+    // - An administrator can read their own profile; Master Admin can read all.
+    match /admin_profiles/{adminUid} {
+      allow read: if isAuthenticated() && (
+        request.auth.uid == adminUid ||
+        isMasterAdmin()
+      );
+      allow write: if isMasterAdmin();
+    }
+
+    // Administrator Audit Logs Rules (Stage 2: Tamper-Resistant & Least Privilege)
+    // - Reading: Strictly reserved for Master Administrator or accounts with explicit audit access claim.
+    // - Writing: All creation must occur server-side via Firebase Admin SDK to prevent client forgery.
+    // - Updates & Deletions: Permanently forbidden.
     match /admin_audit_logs/{logId} {
-      allow read: if isAdmin();
-      allow create: if isAdmin() &&
-                      request.resource.data.adminUserId == request.auth.uid &&
-                      (!('createdAt' in request.resource.data) || request.resource.data.createdAt == request.time);
-      allow update, delete: if false; // Immutable audit logs
+      allow read: if isMasterAdmin() || (isAuthenticated() && request.auth.token.get('canAccessAuditLogs', false) == true);
+      allow create, update, delete: if false; // Server-authoritative only
+    }
+
+    // Deleted Records Archive (Stage 2: Master-Only Security Boundary)
+    // - Strictly accessible only to the Master Administrator.
+    match /deleted_records/{recordId} {
+      allow read, write: if isMasterAdmin();
     }
 
     // Prompt 28A — Legal Documents Collection

@@ -417,8 +417,17 @@ export default function HostVerificationPage() {
         setSuccessMessage(
           'Your verification photos and document dates have been submitted to the Mozbook Operations Team for review.'
         );
-        const updated = await getUserVerification(user.uid);
-        setExistingVerification(updated);
+        // Requirement 1: Redirect the host to MozBook Your Home with Approval Pending notification
+        setTimeout(() => {
+          navigate('/host/create', {
+            state: {
+              approvalPending: true,
+              verificationSubmitted: true,
+              hostName: hostName.trim() || user.displayName || 'Mozbook Host',
+              message: 'Your verification documents have been submitted and are awaiting review by our Trust & Safety team. You can continue setting up your accommodation listing below while waiting.'
+            }
+          });
+        }, 800);
       }
     } catch (err: any) {
       setError(err?.message || 'Failed to submit verification request. Please try again.');

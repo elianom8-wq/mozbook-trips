@@ -40,7 +40,8 @@ import {
   Upload,
   Save,
   Moon,
-  ExternalLink
+  ExternalLink,
+  Lock
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { 
@@ -56,19 +57,23 @@ import {
   getUserVerification,
   HostVerification,
   LodgeAccommodation,
-  calculateTotalLodgeUnits
+  calculateTotalLodgeUnits,
+  PhysicalAddress,
+  formatPhysicalAddress
 } from '../services/listingService';
-import { RESIDENCE_TYPES } from '../data/residenceTypes';
 import { AMENITIES_LIST } from '../data/amenities';
 import GpsLocationPicker from '../components/GpsLocationPicker';
-import NearbyPlacesManager from '../components/NearbyPlacesManager';
 import SpecialOffersSection from '../components/SpecialOffersSection';
 import {
   CANONICAL_ACCOMMODATION_TYPES,
+  CANONICAL_PARENT_CATEGORIES,
   OPERATING_MODELS,
   SETTINGS,
   getCanonicalAccommodationType,
   mapCanonicalToLegacyResidenceType,
+  getParentCategoryForType,
+  getCanonicalTypesByCategory,
+  isValidCanonicalCategoryTypePair,
   CanonicalAccommodationTypeId,
   OperatingModelId,
   SettingId,
@@ -78,19 +83,6 @@ import {
 import LodgeAccommodationManager from '../components/LodgeAccommodationManager';
 import AccommodationUnitManager from '../components/AccommodationUnitManager';
 import { calculateCommission, MOZBOOK_COMMISSION_PERCENT, PARTNER_SHARE_PERCENT } from '../config/platformCommission';
-
-const getResidenceIcon = (iconName: string) => {
-  switch (iconName) {
-    case 'Home': return Home;
-    case 'Building': return Building;
-    case 'Building2': return Building2;
-    case 'Trees': return Trees;
-    case 'LayoutGrid': return LayoutGrid;
-    case 'Palmtree': return Palmtree;
-    case 'Tent': return Tent;
-    default: return Home;
-  }
-};
 
 const getAmenityIcon = (iconName: string) => {
   switch (iconName) {
@@ -129,15 +121,19 @@ const COMMON_ROOM_LABELS = [
 
 export default function EditListing() {
   const { id } = useParams<{ id: string }>();
-  const { user, login } = useAuth();
+  const { user, login, isAdmin, loading: authLoading } = useAuth();
   const navigate = useNavigate();
 
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [isUnauthorized, setIsUnauthorized] = useState(false);
+  const [unauthorizedReason, setUnauthorizedReason] = useState<string>('');
+  const [listingHostId, setListingHostId] = useState<string | null>(null);
 
   // Form State
   const [residenceType, setResidenceType] = useState<ResidenceType>('beachfront residence');
   const [canonicalType, setCanonicalType] = useState<CanonicalAccommodationTypeId | undefined>(undefined);
+  const [selectedParentCategory, setSelectedParentCategory] = useState<string>('Private & Self-Contained Accommodation');
   const [selectedOperatingModels, setSelectedOperatingModels] = useState<OperatingModelId[]>([]);
   const [selectedSettings, setSelectedSettings] = useState<SettingId[]>([]);
   const [classificationStatus, setClassificationStatus] = useState<ClassificationStatus | undefined>(undefined);
@@ -154,6 +150,16 @@ export default function EditListing() {
   const [city, setCity] = useState('Maputo');
   const [province, setProvince] = useState('Maputo Cidade');
   const [address, setAddress] = useState('');
+  const [country, setCountry] = useState('Mozambique');
+  const [neighborhood, setNeighborhood] = useState('');
+  const [street, setStreet] = useState('');
+  const [buildingNumber, setBuildingNumber] = useState('');
+  const [buildingName, setBuildingName] = useState('');
+  const [postalCode, setPostalCode] = useState('');
+  const [directionsLandmark, setDirectionsLandmark] = useState('');
+  const [useGps, setUseGps] = useState(true);
+  const [usePhysicalAddress, setUsePhysicalAddress] = useState(true);
+  const [pinSource, setPinSource] = useState<'gps' | 'map_pin' | 'search' | 'default'>('default');
 
   const [selectedAmenities, setSelectedAmenities] = useState<string[]>([]);
   const [photos, setPhotos] = useState<LabeledImage[]>([]);
@@ -194,8 +200,20 @@ export default function EditListing() {
       return;
     }
 
+    if (authLoading) {
+      return; // Wait for authentication initialization to complete
+    }
+
+    if (!user) {
+      setIsUnauthorized(true);
+      setUnauthorizedReason('Authentication Required: Please sign in to an authorized host account or administrator account to edit listings.');
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
     setLoadError(null);
+    setIsUnauthorized(false);
 
     Promise.all([
       getListingById(id),
@@ -203,10 +221,21 @@ export default function EditListing() {
     ])
       .then(([listingData, separateOffer]) => {
         if (!listingData) {
-          setLoadError('Listing not found.');
+          setLoadError('Listing not found or currently unavailable.');
           setLoading(false);
           return;
         }
+
+        // Host Authorization check: user must be the listing host OR an admin
+        const isOwner = Boolean(user && listingData.hostId && user.uid === listingData.hostId);
+        if (!isOwner && !isAdmin) {
+          setIsUnauthorized(true);
+          setUnauthorizedReason('Access Denied: You do not have permission to edit this listing. Only the property host or a MozBook administrator can access the management interface.');
+          setLoading(false);
+          return; // CRITICAL: Stop here! DO NOT populate form with private listing details!
+        }
+
+        setListingHostId(listingData.hostId);
 
         setTitle(listingData.title || '');
         setDescription(listingData.description || '');
@@ -214,10 +243,30 @@ export default function EditListing() {
         setPrice(listingData.price || 2000);
         setMinNights(listingData.minNights || 1);
         setAvailableFrom(listingData.availableFrom || '');
-        setAvailableTo(listingData.availableTo || '');
-        setCity(listingData.city || 'Maputo');
-        setProvince(listingData.province || 'Maputo Cidade');
+        const addrDetails = listingData.addressDetails;
+        setCity(listingData.city || addrDetails?.city || 'Maputo');
+        setProvince(listingData.province || addrDetails?.province || 'Maputo Cidade');
         setAddress(listingData.location || '');
+        setCountry(listingData.country || addrDetails?.country || 'Mozambique');
+        setNeighborhood(listingData.neighborhood || addrDetails?.neighborhood || '');
+        setStreet(listingData.street || addrDetails?.street || '');
+        setBuildingNumber(listingData.buildingNumber || addrDetails?.buildingNumber || '');
+        setBuildingName(listingData.buildingName || addrDetails?.buildingName || '');
+        setPostalCode(listingData.postalCode || addrDetails?.postalCode || '');
+        setDirectionsLandmark(listingData.directionsLandmark || addrDetails?.directionsLandmark || '');
+        
+        if (listingData.locationType) {
+          setUseGps(listingData.locationType === 'gps' || listingData.locationType === 'both');
+          setUsePhysicalAddress(listingData.locationType === 'address' || listingData.locationType === 'both');
+        } else {
+          setUseGps(Boolean(listingData.coordinates));
+          setUsePhysicalAddress(Boolean(listingData.location || listingData.city));
+        }
+
+        if (listingData.pinSource) {
+          setPinSource(listingData.pinSource);
+        }
+
         if (listingData.coordinates) {
           setCoordinates(listingData.coordinates);
         }
@@ -243,6 +292,8 @@ export default function EditListing() {
           setClassificationStatus(listingData.classificationStatus || 'VALID_MATCH');
           setSelectedOperatingModels(listingData.operatingModels || []);
           setSelectedSettings(listingData.settings || []);
+          const derivedCat = (listingData as any).canonicalCategory || getParentCategoryForType(listingData.canonicalType);
+          if (derivedCat) setSelectedParentCategory(derivedCat);
         } else if (listingData.residenceType) {
           const mapping = mapLegacyResidenceType(listingData.residenceType);
           if (mapping) {
@@ -250,7 +301,12 @@ export default function EditListing() {
             setClassificationStatus(mapping.classificationStatus);
             if (mapping.suggestedSettings) setSelectedSettings(mapping.suggestedSettings);
             if (mapping.suggestedOperatingModels) setSelectedOperatingModels(mapping.suggestedOperatingModels);
+            const derivedCat = getParentCategoryForType(mapping.canonicalTypeId);
+            if (derivedCat) setSelectedParentCategory(derivedCat);
           }
+        }
+        if ((listingData as any).canonicalCategory) {
+          setSelectedParentCategory((listingData as any).canonicalCategory);
         }
 
         // Prefer standalone special offer from special_offers collection if found, else listing.specialOffer
@@ -266,7 +322,7 @@ export default function EditListing() {
         setLoadError('Could not load listing details.');
         setLoading(false);
       });
-  }, [id]);
+  }, [id, user?.uid, isAdmin, authLoading]);
 
   // MozBook platform commission (15%) and partner earnings (85%)
   const { commissionAmount: hostServiceFee, partnerShare: netHostEarnings } = calculateCommission(price);
@@ -279,12 +335,47 @@ export default function EditListing() {
     }
   };
 
+  const handleSelectResidenceType = (typeId: string) => {
+    setResidenceType(typeId as ResidenceType);
+    const mapping = mapLegacyResidenceType(typeId);
+    if (mapping) {
+      setCanonicalType(mapping.canonicalTypeId);
+      setClassificationStatus(mapping.classificationStatus);
+      const cat = getParentCategoryForType(mapping.canonicalTypeId);
+      if (cat) setSelectedParentCategory(cat);
+      if (mapping.suggestedSettings) setSelectedSettings(mapping.suggestedSettings);
+      if (mapping.suggestedOperatingModels) setSelectedOperatingModels(mapping.suggestedOperatingModels);
+    }
+  };
+
+  const handleSelectParentCategory = (newCategory: string) => {
+    setSelectedParentCategory(newCategory);
+    // If the currently selected canonicalType does not belong to the new parent category,
+    // update to the first valid canonical type in that category. Otherwise, preserve the current selection!
+    if (!canonicalType || !isValidCanonicalCategoryTypePair(newCategory, canonicalType)) {
+      const availableTypes = getCanonicalTypesByCategory(newCategory);
+      if (availableTypes.length > 0) {
+        const nextType = availableTypes[0].backend_id;
+        setCanonicalType(nextType);
+        setClassificationStatus('VALID_MATCH');
+        const legacyFallback = mapCanonicalToLegacyResidenceType(nextType);
+        if (legacyFallback) {
+          setResidenceType(legacyFallback);
+        }
+      }
+    }
+  };
+
   const handleSelectCanonicalType = (newCanonicalId: CanonicalAccommodationTypeId) => {
     setCanonicalType(newCanonicalId);
     setClassificationStatus('VALID_MATCH');
     const legacyFallback = mapCanonicalToLegacyResidenceType(newCanonicalId);
     if (legacyFallback) {
       setResidenceType(legacyFallback);
+    }
+    const cat = getParentCategoryForType(newCanonicalId);
+    if (cat && cat !== selectedParentCategory) {
+      setSelectedParentCategory(cat);
     }
   };
 
@@ -358,6 +449,10 @@ export default function EditListing() {
   // Requirement 10: Delete Offer without deleting the underlying listing
   const handleDeleteOffer = async () => {
     if (!id) return;
+    if (listingHostId && user?.uid !== listingHostId && !isAdmin) {
+      setSubmitError('Unauthorized: You are not authorized to modify special offers for this listing.');
+      return;
+    }
     setSpecialOffer(null);
     try {
       await removeListingSpecialOffer(id);
@@ -377,6 +472,11 @@ export default function EditListing() {
       return;
     }
 
+    if (listingHostId && user.uid !== listingHostId && !isAdmin) {
+      setSubmitError('Unauthorized: You do not have permission to save changes to this listing.');
+      return;
+    }
+
     if (photos.length === 0) {
       setSubmitError('Please add at least one photo with a label for your residence.');
       return;
@@ -384,6 +484,23 @@ export default function EditListing() {
 
     if (!title.trim()) {
       setSubmitError('Please provide a listing title.');
+      return;
+    }
+
+    if (!city.trim()) {
+      setSubmitError('Please provide a city or municipality for your property.');
+      return;
+    }
+
+    if (!country.trim()) {
+      setSubmitError('Please provide a country for your property.');
+      return;
+    }
+
+    const hasCoordinates = Boolean(coordinates && (coordinates.lat !== 0 || coordinates.lng !== 0));
+    const hasAddress = Boolean(city.trim() && (province.trim() || street.trim() || address.trim()));
+    if (!hasCoordinates && !hasAddress) {
+      setSubmitError('Please provide either GPS coordinates on the map or a physical street address.');
       return;
     }
 
@@ -397,12 +514,33 @@ export default function EditListing() {
     setSaveSuccessMessage(null);
 
     try {
+      const structuredAddressDetails: PhysicalAddress = {
+        country: country.trim() || 'Mozambique',
+        province: province.trim(),
+        city: city.trim(),
+        neighborhood: neighborhood.trim() || undefined,
+        street: street.trim() || undefined,
+        buildingNumber: buildingNumber.trim() || undefined,
+        buildingName: buildingName.trim() || undefined,
+        postalCode: postalCode.trim() || undefined,
+        directionsLandmark: directionsLandmark.trim() || undefined,
+      };
+
+      const computedLocationType: 'gps' | 'address' | 'both' = (useGps && usePhysicalAddress)
+        ? 'both'
+        : useGps
+          ? 'gps'
+          : 'address';
+
+      const formattedLocation = formatPhysicalAddress(structuredAddressDetails) || address || `${city}, ${province}`;
+
       const updates = {
         title: title.trim(),
         description: description.trim() || `${residenceType} in ${city}, ${province}.`,
-        location: address || `${city}, ${province}`,
+        location: formattedLocation,
         residenceType,
         canonicalType: canonicalType || undefined,
+        canonicalCategory: selectedParentCategory,
         operatingModels: selectedOperatingModels.length > 0 ? selectedOperatingModels : undefined,
         settings: selectedSettings.length > 0 ? selectedSettings : undefined,
         classificationStatus: classificationStatus || undefined,
@@ -412,9 +550,20 @@ export default function EditListing() {
         labeledImages: photos,
         amenities: selectedAmenities,
         category: residenceType,
-        city,
-        province,
-        country: 'Mozambique',
+        city: city.trim(),
+        province: province.trim(),
+        country: country.trim() || 'Mozambique',
+        neighborhood: neighborhood.trim() || undefined,
+        street: street.trim() || undefined,
+        buildingNumber: buildingNumber.trim() || undefined,
+        buildingName: buildingName.trim() || undefined,
+        postalCode: postalCode.trim() || undefined,
+        directionsLandmark: directionsLandmark.trim() || undefined,
+        addressDetails: structuredAddressDetails,
+        locationType: computedLocationType,
+        hasGpsLocation: Boolean(useGps && hasCoordinates),
+        hasPhysicalAddress: Boolean(usePhysicalAddress && city.trim()),
+        pinSource,
         availableFrom,
         availableTo,
         dates: availableFrom && availableTo ? `${availableFrom} to ${availableTo}` : undefined,
@@ -455,6 +604,36 @@ export default function EditListing() {
         <div className="flex flex-col items-center gap-3 bg-white p-8 rounded-2xl border border-gray-200 shadow-sm">
           <Loader2 className="animate-spin text-[#009A60]" size={32} />
           <p className="text-sm font-semibold text-gray-700">Loading listing details...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (isUnauthorized) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+        <div className="max-w-md w-full bg-white p-8 rounded-3xl border border-red-200 shadow-xl text-center space-y-4">
+          <div className="w-16 h-16 bg-red-100 text-red-600 rounded-2xl flex items-center justify-center mx-auto border border-red-200">
+            <Lock size={32} />
+          </div>
+          <h2 className="text-xl font-bold text-gray-900">Host Authorization Required</h2>
+          <p className="text-xs text-gray-600 leading-relaxed">
+            {unauthorizedReason || 'You do not have permission to manage this listing. Only the listing host or a MozBook administrator can access the host management interface.'}
+          </p>
+          <div className="pt-2 flex flex-col gap-2.5">
+            <Link
+              to={id ? `/listing/${id}` : '/'}
+              className="inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-[#009A60] hover:bg-[#008250] text-white rounded-xl text-xs font-bold transition-colors shadow-sm"
+            >
+              <span>Return to Public Listing</span>
+            </Link>
+            <Link
+              to="/discover"
+              className="inline-flex items-center justify-center gap-2 px-5 py-2 text-gray-600 hover:text-gray-900 rounded-xl text-xs font-medium transition-colors"
+            >
+              <span>Explore MozBook</span>
+            </Link>
+          </div>
         </div>
       </div>
     );
@@ -545,97 +724,66 @@ export default function EditListing() {
             </div>
           )}
 
-          {/* Section 1: Residence Type Selection */}
-          <div className="bg-white p-6 sm:p-8 rounded-2xl border border-gray-200 shadow-xs space-y-4">
+          {/* Section 1: Accommodation Selection */}
+          <div className="bg-white p-6 sm:p-8 rounded-2xl border border-gray-200 shadow-xs space-y-6">
             <div>
               <span className="text-xs font-bold tracking-wider text-[#009A60] uppercase">
-                Step 1 of 7
+                Step 1 of 6
               </span>
               <h2 className="text-xl font-bold text-gray-900 mt-1">
-                Residence Type
+                Which best describes your residence?
               </h2>
               <p className="text-sm text-gray-500 mt-1">
-                Category classification for search filters.
+                Select your accommodation category and property type so travelers can easily discover your stay.
               </p>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5 pt-2">
-              {RESIDENCE_TYPES.map((type) => {
-                const isSelected = residenceType === type.id;
-                const Icon = getResidenceIcon(type.iconName);
-                return (
-                  <button
-                    key={type.id}
-                    type="button"
-                    onClick={() => setResidenceType(type.id as ResidenceType)}
-                    className={`p-4 rounded-xl border text-left transition-all relative flex flex-col justify-between cursor-pointer ${
-                      isSelected
-                        ? 'border-[#009A60] ring-2 ring-[#009A60]/20 bg-[#e6f7f0]/40 shadow-sm'
-                        : 'border-gray-200 bg-white hover:border-gray-300 hover:bg-gray-50/50'
-                    }`}
-                  >
-                    <div>
-                      <div
-                        className={`w-10 h-10 rounded-xl flex items-center justify-center mb-3 ${
-                          isSelected
-                            ? 'bg-[#009A60] text-white shadow-xs'
-                            : 'bg-gray-100 text-gray-700'
-                        }`}
-                      >
-                        <Icon size={20} />
-                      </div>
-                      <h3 className="font-bold text-gray-900 text-sm capitalize">
-                        {type.title}
-                      </h3>
-                      <p className="text-xs text-gray-500 mt-1 line-clamp-2">
-                        {type.subtitle}
-                      </p>
-                    </div>
-
-                    {isSelected && (
-                      <div className="mt-3 flex items-center gap-1 text-xs font-semibold text-[#009A60]">
-                        <CheckCircle2 size={14} /> Selected
-                      </div>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* Property Refinement Section */}
-            <div className="pt-6 mt-6 border-t border-gray-100 space-y-6">
-              <div>
-                <h3 className="text-base font-bold text-gray-900">
-                  Refine your property
-                </h3>
-              </div>
-
-              {/* Accommodation Classification Dropdown */}
+            {/* Category & Accommodation Type Dropdowns */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Dropdown 1: Category */}
               <div>
                 <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1.5">
-                  Accommodation Classification
+                  Category
+                </label>
+                <select
+                  value={selectedParentCategory}
+                  onChange={(e) => handleSelectParentCategory(e.target.value)}
+                  data-testid="category-select"
+                  className="w-full px-3.5 py-2.5 bg-white border border-gray-300 rounded-xl text-sm font-medium text-gray-800 focus:outline-hidden focus:ring-2 focus:ring-[#009A60] focus:border-[#009A60]"
+                >
+                  {CANONICAL_PARENT_CATEGORIES.map(category => (
+                    <option key={category} value={category}>
+                      {category}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Dropdown 2: Accommodation Type */}
+              <div>
+                <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1.5">
+                  Accommodation Type
                 </label>
                 <select
                   value={canonicalType || ''}
                   onChange={(e) => handleSelectCanonicalType(e.target.value as CanonicalAccommodationTypeId)}
+                  data-testid="accommodation-type-select"
                   className="w-full px-3.5 py-2.5 bg-white border border-gray-300 rounded-xl text-sm font-medium text-gray-800 focus:outline-hidden focus:ring-2 focus:ring-[#009A60] focus:border-[#009A60]"
                 >
-                  {Array.from(new Set(CANONICAL_ACCOMMODATION_TYPES.map(t => t.parent_category))).map(category => (
-                    <optgroup key={category} label={category}>
-                      {CANONICAL_ACCOMMODATION_TYPES.filter(t => t.parent_category === category).map(t => (
-                        <option key={t.backend_id} value={t.backend_id}>
-                          {t.display_name} — {t.description.slice(0, 55)}...
-                        </option>
-                      ))}
-                    </optgroup>
+                  {getCanonicalTypesByCategory(selectedParentCategory).map(t => (
+                    <option key={t.backend_id} value={t.backend_id}>
+                      {t.display_name}
+                    </option>
                   ))}
                 </select>
-                {canonicalType && getCanonicalAccommodationType(canonicalType) && (
-                  <p className="text-xs text-emerald-800 bg-emerald-50/60 border border-emerald-200/60 rounded-lg p-2.5 mt-2">
-                    <strong>{getCanonicalAccommodationType(canonicalType)?.display_name}:</strong> {getCanonicalAccommodationType(canonicalType)?.description}
-                  </p>
-                )}
               </div>
+            </div>
+
+            {canonicalType && getCanonicalAccommodationType(canonicalType) && (
+              <p className="text-xs text-emerald-800 bg-emerald-50/60 border border-emerald-200/60 rounded-lg p-3">
+                <strong>{getCanonicalAccommodationType(canonicalType)?.display_name}:</strong> {getCanonicalAccommodationType(canonicalType)?.description}
+              </p>
+            )}
 
               {/* Operating / Meal Models */}
               <div className="space-y-2">
@@ -701,7 +849,6 @@ export default function EditListing() {
                   })}
                 </div>
               </div>
-            </div>
 
             {/* Multi-Unit Accommodation Option (Stage 3E Generalization) */}
             <div className="pt-4 border-t border-gray-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -759,7 +906,7 @@ export default function EditListing() {
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
               <div>
                 <span className="text-xs font-bold tracking-wider text-[#009A60] uppercase">
-                  Step 2 of 7
+                  Step 2 of 6
                 </span>
                 <h2 className="text-xl font-bold text-gray-900 mt-1">
                   Amenities & Facilities
@@ -810,11 +957,14 @@ export default function EditListing() {
           <div className="bg-white p-6 sm:p-8 rounded-2xl border border-gray-200 shadow-xs space-y-4">
             <div>
               <span className="text-xs font-bold tracking-wider text-[#009A60] uppercase">
-                Step 3 of 7
+                Step 3 of 6
               </span>
               <h2 className="text-xl font-bold text-gray-900 mt-1">
-                Location & GPS Pinpoint
+                Property Location & Physical Address
               </h2>
+              <p className="text-sm text-gray-500 mt-1">
+                Identify your property using GPS location, a map pin, a manual physical address, or both.
+              </p>
             </div>
 
             <GpsLocationPicker
@@ -822,40 +972,40 @@ export default function EditListing() {
               city={city}
               province={province}
               address={address}
+              country={country}
+              neighborhood={neighborhood}
+              street={street}
+              buildingNumber={buildingNumber}
+              buildingName={buildingName}
+              postalCode={postalCode}
+              directionsLandmark={directionsLandmark}
+              useGps={useGps}
+              usePhysicalAddress={usePhysicalAddress}
+              pinSource={pinSource}
               onChange={(data) => {
-                setCoordinates(data.coordinates);
-                setCity(data.city);
-                setProvince(data.province);
-                setAddress(data.address);
+                if (data.coordinates) setCoordinates(data.coordinates);
+                if (data.city !== undefined) setCity(data.city);
+                if (data.province !== undefined) setProvince(data.province);
+                if (data.address !== undefined) setAddress(data.address);
+                if (data.country !== undefined) setCountry(data.country);
+                if (data.neighborhood !== undefined) setNeighborhood(data.neighborhood);
+                if (data.street !== undefined) setStreet(data.street);
+                if (data.buildingNumber !== undefined) setBuildingNumber(data.buildingNumber);
+                if (data.buildingName !== undefined) setBuildingName(data.buildingName);
+                if (data.postalCode !== undefined) setPostalCode(data.postalCode);
+                if (data.directionsLandmark !== undefined) setDirectionsLandmark(data.directionsLandmark);
+                if (data.useGps !== undefined) setUseGps(data.useGps);
+                if (data.usePhysicalAddress !== undefined) setUsePhysicalAddress(data.usePhysicalAddress);
+                if (data.pinSource !== undefined) setPinSource(data.pinSource);
               }}
             />
           </div>
 
-          {/* Section 4: What's Nearby? */}
-          <div className="bg-white p-6 sm:p-8 rounded-2xl border border-gray-200 shadow-xs space-y-4">
-            <div>
-              <span className="text-xs font-bold tracking-wider text-[#009A60] uppercase">
-                Step 4 of 7
-              </span>
-              <h2 className="text-xl font-bold text-gray-900 mt-1">
-                What's Nearby?
-              </h2>
-            </div>
-
-            <NearbyPlacesManager
-              city={city}
-              province={province}
-              coordinates={coordinates}
-              nearbyPlaces={nearbyPlaces}
-              onChange={setNearbyPlaces}
-            />
-          </div>
-
-          {/* Section 5: Calendar, Minimum Nights & Nightly Base Rate */}
+          {/* Section 4: Calendar, Minimum Nights & Nightly Base Rate */}
           <div className="bg-white p-6 sm:p-8 rounded-2xl border border-gray-200 shadow-xs space-y-6">
             <div>
               <span className="text-xs font-bold tracking-wider text-[#009A60] uppercase">
-                Step 5 of 7
+                Step 4 of 6
               </span>
               <h2 className="text-xl font-bold text-gray-900 mt-1">
                 Dates Available, Minimum Nights & Base Pricing
@@ -990,8 +1140,9 @@ export default function EditListing() {
             </div>
           </div>
 
-          {/* Section 6: Special Offers & Seasonal Pricing (NEW - Requirement 1 through 10) */}
+          {/* Section 5: Special Offers & Seasonal Pricing */}
           <SpecialOffersSection
+            stepBadge="Step 5 of 6"
             basePrice={price}
             offer={specialOffer}
             currency={currency}
@@ -1000,11 +1151,11 @@ export default function EditListing() {
             isEditing={true}
           />
 
-          {/* Section 7: Title, Story & Labeled Photos */}
+          {/* Section 6: Title, Story & Labeled Photos */}
           <div className="bg-white p-6 sm:p-8 rounded-2xl border border-gray-200 shadow-xs space-y-6">
             <div>
               <span className="text-xs font-bold tracking-wider text-[#009A60] uppercase">
-                Step 7 of 7
+                Step 6 of 6
               </span>
               <h2 className="text-xl font-bold text-gray-900 mt-1">
                 Residence Details & Named Photos

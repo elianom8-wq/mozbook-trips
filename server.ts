@@ -18,7 +18,18 @@ import {
   syncPaySuiteRefundStatus,
   getPrivilegedFirestore
 } from "./src/server/paymentService";
-import { PaySuiteError } from "./src/server/paysuiteClient";
+import { 
+  ADMIN_PERMISSIONS, 
+  AdminPermission, 
+  MASTER_ADMIN_EMAIL 
+} from "./src/types/adminPermissions";
+import { 
+  resolveAdminContext, 
+  authorizeAdminRequest, 
+  hasAdminPermission,
+  isMasterAdminIdentity 
+} from "./src/server/adminAuth";
+import { PaySuiteError, getProductionWebhookUrl, requestPaySuitePayment } from "./src/server/paysuiteClient";
 import {
   reserveExperienceInventory,
   reserveStayInventory,
@@ -39,6 +50,10 @@ import {
   sanitizeCheckInSubmission,
   sanitizeLegalAcceptanceSubmission
 } from "./src/server/routeSecurity";
+import {
+  isCanonicalAccommodationTypeId,
+  isValidCanonicalCategoryTypePair
+} from "./src/data/canonicalAccommodationTaxonomy";
 
 dotenv.config();
 
@@ -135,7 +150,7 @@ async function startServer() {
   });
 
   // Helper: Verify authenticated user strictly from verified Firebase ID token
-  async function authenticateRequest(req: express.Request): Promise<{ uid: string; email?: string; displayName?: string; idToken?: string } | null> {
+  async function authenticateRequest(req: express.Request): Promise<{ uid: string; email?: string; displayName?: string; emailVerified?: boolean; idToken?: string } | null> {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return null;
@@ -161,6 +176,7 @@ async function startServer() {
             uid: data.users[0].localId,
             email: data.users[0].email,
             displayName: data.users[0].displayName,
+            emailVerified: data.users[0].emailVerified === true,
             idToken: token
           };
         }
@@ -180,6 +196,7 @@ async function startServer() {
             uid: decoded.uid,
             email: decoded.email,
             displayName: (decoded as any).name,
+            emailVerified: (decoded as any).email_verified === true,
             idToken: token
           };
         }
@@ -294,6 +311,180 @@ async function startServer() {
   });
 
   /**
+   * GET /api/admin/me
+   * Stage 2: Authorization Foundation
+   * Authoritative identity and granular permissions inquiry for authenticated administrator.
+   * Returns server-verified master status and assigned granular permissions.
+   */
+  app.get("/api/admin/me", async (req, res) => {
+    try {
+      const user = await authenticateRequest(req);
+      const authResult = await authorizeAdminRequest(user);
+      if (!authResult.authorized || !authResult.context) {
+        res.status(authResult.statusCode).json({
+          success: false,
+          error: authResult.error || "Administrator authorization failed."
+        });
+        return;
+      }
+
+      res.status(200).json({
+        success: true,
+        admin: {
+          uid: authResult.context.uid,
+          email: authResult.context.email,
+          displayName: authResult.context.displayName,
+          isMaster: authResult.context.isMaster,
+          isActive: authResult.context.isActive,
+          permissions: authResult.context.permissions
+        }
+      });
+    } catch (err: any) {
+      console.error("[API] /api/admin/me error:", err);
+      res.status(500).json({ success: false, error: err.message || "Failed to resolve admin identity." });
+    }
+  });
+
+  /**
+   * POST /api/admin/payments/test-payment
+   * Allows authorized administrators to test live PaySuite payment generation.
+   * Validates API token, sanitizes reference to alphanumeric, and provides hosted checkout URL.
+   */
+  app.post("/api/admin/payments/test-payment", async (req, res) => {
+    try {
+      const user = await authenticateRequest(req);
+      const authResult = await authorizeAdminRequest(user);
+      if (!authResult.authorized) {
+        res.status(authResult.statusCode).json({
+          success: false,
+          error: authResult.error || "Administrator authorization required."
+        });
+        return;
+      }
+
+      const amount = Number(req.body.amount || 10);
+      const description = req.body.description || "MozBook Admin Test Payment";
+      const reference = req.body.reference || `MBTEST${Date.now().toString().slice(-8)}`;
+
+      const payment = await requestPaySuitePayment({
+        amount,
+        reference,
+        description,
+        webhook_url: getProductionWebhookUrl()
+      });
+
+      res.status(200).json({
+        success: true,
+        message: "PaySuite test payment intent created successfully.",
+        payment
+      });
+    } catch (err: any) {
+      console.error("[API] /api/admin/payments/test-payment error:", err);
+      const statusCode = err instanceof PaySuiteError ? err.statusCode : 500;
+      res.status(statusCode).json({
+        success: false,
+        error: err.message || "Failed to create test payment intent."
+      });
+    }
+  });
+
+  /**
+   * Master-Only Security Boundary: Administrator Management (Stage 3 Preparation)
+   * Strictly restricts sub-admin management endpoints to the verified Master Administrator.
+   */
+  app.all("/api/admin/sub-admins*", async (req, res) => {
+    try {
+      const user = await authenticateRequest(req);
+      const authResult = await authorizeAdminRequest(user);
+      if (!authResult.authorized || !authResult.context || !authResult.context.isMaster) {
+        res.status(403).json({
+          success: false,
+          error: "Forbidden: Administrator management is strictly restricted to the Master Administrator (mozbookinfo@gmail.com)."
+        });
+        return;
+      }
+      res.status(501).json({
+        success: false,
+        error: "Sub-admin management API boundary established. Implementation scheduled for Stage 3."
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message || "Authorization check failed." });
+    }
+  });
+
+  /**
+   * Master-Only Security Boundary: Deleted Records Archive (Stage 4 Preparation)
+   * Strictly restricts archive inspection and recovery endpoints to the verified Master Administrator.
+   */
+  app.all("/api/admin/archive*", async (req, res) => {
+    try {
+      const user = await authenticateRequest(req);
+      const authResult = await authorizeAdminRequest(user);
+      if (!authResult.authorized || !authResult.context || !authResult.context.isMaster) {
+        res.status(403).json({
+          success: false,
+          error: "Forbidden: Deleted records archive is strictly restricted to the Master Administrator (mozbookinfo@gmail.com)."
+        });
+        return;
+      }
+      res.status(501).json({
+        success: false,
+        error: "Archive boundary established. Implementation scheduled for Stage 4."
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message || "Authorization check failed." });
+    }
+  });
+
+  /**
+   * Master-Only Security Boundary: Master Audit Log Access
+   * Requires exceptional permission AUDIT_LOGS_VIEW_MASTER or Master Admin identity.
+   */
+  app.get("/api/admin/audit-logs/master", async (req, res) => {
+    try {
+      const user = await authenticateRequest(req);
+      const authResult = await authorizeAdminRequest(user, ADMIN_PERMISSIONS.AUDIT_LOGS_VIEW_MASTER);
+      if (!authResult.authorized || !authResult.context) {
+        res.status(authResult.statusCode).json({
+          success: false,
+          error: authResult.error || "Forbidden: Access to master audit log requires explicit exceptional authorization."
+        });
+        return;
+      }
+      res.status(501).json({
+        success: false,
+        error: "Master audit log query boundary established."
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message || "Authorization check failed." });
+    }
+  });
+
+  /**
+   * Data Export Boundary: Direct platform data export
+   * Stage 2 Requirement: Generic sub-admins must NOT have unrestricted data export access.
+   */
+  app.get("/api/admin/financials/export", async (req, res) => {
+    try {
+      const user = await authenticateRequest(req);
+      const authResult = await authorizeAdminRequest(user);
+      if (!authResult.authorized || !authResult.context || !authResult.context.isMaster) {
+        res.status(403).json({
+          success: false,
+          error: "Forbidden: Direct platform data export is restricted. Sub-admins are limited to authorized on-screen operational reporting."
+        });
+        return;
+      }
+      res.status(200).json({
+        success: true,
+        message: "Export boundary verified for Master Administrator."
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message || "Export authorization check failed." });
+    }
+  });
+
+  /**
    * POST /api/admin/audit-log
    * Authoritative server-side admin audit log entry endpoint.
    * Enforces verified ID token, authorized admin status, server-generated timestamps,
@@ -302,13 +493,12 @@ async function startServer() {
   app.post("/api/admin/audit-log", async (req, res) => {
     try {
       const user = await authenticateRequest(req);
-      if (!user) {
-        res.status(401).json({ success: false, error: "Authentication required." });
-        return;
-      }
-
-      if (!isUserAdmin(user)) {
-        res.status(403).json({ success: false, error: "Forbidden: Administrator privileges required." });
+      const authResult = await authorizeAdminRequest(user);
+      if (!authResult.authorized || !authResult.context) {
+        res.status(authResult.statusCode).json({
+          success: false,
+          error: authResult.error || "Forbidden: Administrator privileges required."
+        });
         return;
       }
 
@@ -348,8 +538,9 @@ async function startServer() {
 
       const auditRecord: Record<string, any> = {
         id: logId,
-        adminUserId: user.uid,
-        adminEmail: user.email || 'mozbookinfo@gmail.com',
+        adminUserId: authResult.context.uid,
+        adminEmail: authResult.context.email || 'mozbookinfo@gmail.com',
+        adminRole: authResult.context.isMaster ? 'master' : 'sub_admin',
         action: action.trim(),
         module: module.trim(),
         timestamp: serverNowIso,
@@ -386,15 +577,11 @@ async function startServer() {
   app.post("/api/admin/hosts/sync-listings", async (req, res) => {
     try {
       const user = await authenticateRequest(req);
-      if (!user) {
-        res.status(401).json({ success: false, error: "Authentication required." });
-        return;
-      }
-
-      if (!isUserAdmin(user)) {
-        res.status(403).json({
+      const authResult = await authorizeAdminRequest(user, ADMIN_PERMISSIONS.HOSTS_MANAGE);
+      if (!authResult.authorized) {
+        res.status(authResult.statusCode).json({
           success: false,
-          error: "Forbidden: Administrator privileges required. Permanent administrator is mozbookinfo@gmail.com."
+          error: authResult.error || "Forbidden: Administrator privileges required with hosts:manage permission."
         });
         return;
       }
@@ -431,7 +618,12 @@ async function startServer() {
 
         if (verified) {
           const hasTitle = Boolean(data.title && String(data.title).trim().length > 0);
-          const hasLocation = Boolean((data.location && String(data.location).trim().length > 0) || (data.city && String(data.city).trim().length > 0));
+          const hasLocation = Boolean(
+            (data.location && String(data.location).trim().length > 0) || 
+            (data.city && String(data.city).trim().length > 0) ||
+            (data.addressDetails?.city && String(data.addressDetails.city).trim().length > 0) ||
+            (data.coordinates && (data.coordinates.lat || data.coordinates.lng))
+          );
           const hasPrice = typeof data.price === 'number' && data.price > 0;
           const hasPhotos = (Array.isArray(data.images) && data.images.length > 0) ||
                             (Array.isArray(data.labeledImages) && data.labeledImages.length > 0);
@@ -533,6 +725,367 @@ async function startServer() {
   });
 
   /**
+   * POST /api/admin/hosts/:hostId/verify
+   * Authoritative backend endpoint for administrator verification approval of a host.
+   * Confirms verification requirements (documents present, not expired, not suspended),
+   * updates user and verification documents, and automatically publishes eligible completed listings.
+   */
+  app.post("/api/admin/hosts/:hostId/verify", async (req, res) => {
+    try {
+      const user = await authenticateRequest(req);
+      const authResult = await authorizeAdminRequest(user, ADMIN_PERMISSIONS.HOSTS_MANAGE);
+      if (!authResult.authorized) {
+        res.status(authResult.statusCode).json({
+          success: false,
+          error: authResult.error || "Forbidden: Administrator privileges required with hosts:manage permission."
+        });
+        return;
+      }
+
+      const { hostId } = req.params;
+      const { status = 'verified', adminNotes = '' } = req.body || {};
+
+      if (!hostId || typeof hostId !== 'string') {
+        res.status(400).json({ success: false, error: "hostId parameter is required." });
+        return;
+      }
+
+      const adminDb = getPrivilegedFirestore();
+      const serverNow = new Date().toISOString();
+
+      // 1. Check user record
+      const userDocRef = adminDb.collection('users').doc(hostId);
+      const userDoc = await userDocRef.get();
+      if (userDoc.exists) {
+        const udata = userDoc.data() || {};
+        if (udata.accountStatus === 'suspended' || udata.isSuspended === true) {
+          res.status(400).json({
+            success: false,
+            error: "Cannot approve verification: Host account is under active administrative suspension."
+          });
+          return;
+        }
+      }
+
+      // 2. Locate verification record
+      let verifDocId: string | null = null;
+      let verifData: any = null;
+      const verifSnap = await adminDb.collection('verifications').where('userId', '==', hostId).get();
+      if (!verifSnap.empty) {
+        const sorted = verifSnap.docs
+          .map(d => ({ id: d.id, ...d.data() }))
+          .sort((a: any, b: any) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
+        verifDocId = sorted[0].id;
+        verifData = sorted[0];
+      }
+
+      const isApproving = status === 'verified';
+
+      const batch = adminDb.batch();
+
+      // Update verification document if found
+      if (verifDocId) {
+        const vRef = adminDb.collection('verifications').doc(verifDocId);
+        batch.update(vRef, {
+          status,
+          adminNotes: String(adminNotes || ''),
+          reviewedAt: serverNow,
+          reviewedBy: user?.email || 'mozbookinfo@gmail.com'
+        });
+      }
+
+      // Update user document
+      if (userDoc.exists) {
+        batch.update(userDocRef, {
+          verificationStatus: status,
+          isHostVerified: isApproving,
+          verifiedAt: isApproving ? serverNow : null
+        });
+      } else {
+        batch.set(userDocRef, {
+          uid: hostId,
+          verificationStatus: status,
+          isHostVerified: isApproving,
+          verifiedAt: isApproving ? serverNow : null,
+          createdAt: serverNow
+        }, { merge: true });
+      }
+
+      // 3. Synchronize and automatically publish eligible listings
+      const listingsSnap = await adminDb.collection('listings').where('hostId', '==', hostId).get();
+      let publishedCount = 0;
+      let draftIncompleteCount = 0;
+
+      listingsSnap.docs.forEach((docSnap) => {
+        const data = docSnap.data();
+        const docRef = adminDb.collection('listings').doc(docSnap.id);
+
+        if (isApproving) {
+          const hasTitle = Boolean(data.title && String(data.title).trim().length > 0);
+          const hasLocation = Boolean(
+            (data.location && String(data.location).trim().length > 0) || 
+            (data.city && String(data.city).trim().length > 0) ||
+            (data.addressDetails?.city && String(data.addressDetails.city).trim().length > 0) ||
+            (data.coordinates && (data.coordinates.lat || data.coordinates.lng))
+          );
+          const hasPrice = typeof data.price === 'number' && data.price > 0;
+          const hasPhotos = (Array.isArray(data.images) && data.images.length > 0) ||
+                            (Array.isArray(data.labeledImages) && data.labeledImages.length > 0);
+          const isSuspended = data.isSuspended === true || data.status === 'suspended';
+          const isDraft = data.status === 'draft';
+
+          if (isSuspended || data.status === 'rejected') {
+            return;
+          }
+
+          const updates: Record<string, any> = {
+            isHostVerified: true,
+            updatedAt: serverNow
+          };
+
+          // Automatic publication: eligible complete listings go live automatically
+          if (hasTitle && hasLocation && hasPrice && hasPhotos && !isDraft) {
+            if (!data.status || data.status === 'pending' || data.status === 'pending_approval' || data.status === 'pending_verification') {
+              updates.status = 'published';
+              publishedCount++;
+            }
+          } else {
+            // Incomplete listing remains saved as draft
+            updates.status = 'draft';
+            draftIncompleteCount++;
+          }
+
+          batch.update(docRef, updates);
+        } else {
+          // Rejection or revocation
+          batch.update(docRef, {
+            isHostVerified: false,
+            updatedAt: serverNow
+          });
+        }
+      });
+
+      // Synchronize activities_trips
+      const activitiesSnap = await adminDb.collection('activities_trips').where('hostId', '==', hostId).get();
+      activitiesSnap.docs.forEach((docSnap) => {
+        const data = docSnap.data();
+        const docRef = adminDb.collection('activities_trips').doc(docSnap.id);
+
+        if (isApproving) {
+          if (data.isSuspended || data.status === 'suspended' || data.status === 'rejected') {
+            return;
+          }
+          const updates: Record<string, any> = {
+            isHostVerified: true,
+            updatedAt: serverNow
+          };
+          if (!data.status || data.status === 'pending' || data.status === 'pending_approval') {
+            updates.status = 'published';
+            publishedCount++;
+          }
+          batch.update(docRef, updates);
+        } else {
+          batch.update(docRef, {
+            isHostVerified: false,
+            updatedAt: serverNow
+          });
+        }
+      });
+
+      // Audit log entry
+      const auditRef = adminDb.collection('admin_audit_logs').doc();
+      batch.set(auditRef, {
+        id: auditRef.id,
+        adminUid: user?.uid || 'admin',
+        adminEmail: user?.email || 'mozbookinfo@gmail.com',
+        action: isApproving ? 'HOST_APPROVED' : 'HOST_VERIFICATION_UPDATED',
+        category: 'COMPLIANCE',
+        targetType: 'HostVerification',
+        targetId: hostId,
+        metadata: {
+          hostId,
+          status,
+          adminNotes,
+          publishedCount,
+          totalListings: listingsSnap.size + activitiesSnap.size
+        },
+        timestamp: serverNow,
+        ipAddress: req.ip || req.headers['x-forwarded-for'] || 'internal'
+      });
+
+      await batch.commit();
+
+      res.status(200).json({
+        success: true,
+        hostId,
+        verificationStatus: status,
+        totalListingsFound: listingsSnap.size + activitiesSnap.size,
+        publishedCount,
+        draftIncompleteCount
+      });
+    } catch (err: any) {
+      console.error("[API] Host verification approval error:", err);
+      res.status(500).json({ success: false, error: err.message || "Failed to approve host verification." });
+    }
+  });
+
+  /**
+   * POST /api/listings
+   * Authoritative server-side creation of a listing.
+   * Enforces that unverified hosts cannot publish; complete listings are saved as 'pending'
+   * and automatically published when the host is approved.
+   */
+  app.post("/api/listings", async (req, res) => {
+    try {
+      const user = await authenticateRequest(req);
+      if (!user) {
+        res.status(401).json({ success: false, error: "Unauthorized: Sign-in required." });
+        return;
+      }
+
+      const listingData = req.body || {};
+      const hostId = user.uid;
+      const adminDb = getPrivilegedFirestore();
+
+      // Check host verification
+      const userDoc = await adminDb.collection('users').doc(hostId).get();
+      const udata = userDoc.exists ? userDoc.data() : {};
+      const isVerified = udata?.verificationStatus === 'verified' || udata?.isHostVerified === true;
+      const isSuspended = udata?.accountStatus === 'suspended' || udata?.isSuspended === true;
+
+      if (isSuspended) {
+        res.status(403).json({ success: false, error: "Host account is suspended. Cannot create listings." });
+        return;
+      }
+
+      // Backward-compatible canonical taxonomy validation
+      if (listingData.canonicalType) {
+        if (!isCanonicalAccommodationTypeId(listingData.canonicalType)) {
+          res.status(400).json({
+            success: false,
+            error: `Invalid canonicalType: "${listingData.canonicalType}". Must be a valid MozBook canonical accommodation type.`
+          });
+          return;
+        }
+
+        const canonicalCategory = listingData.canonicalCategory || listingData.parentCategory;
+        if (canonicalCategory && !isValidCanonicalCategoryTypePair(canonicalCategory, listingData.canonicalType)) {
+          res.status(400).json({
+            success: false,
+            error: `Invalid taxonomy combination: canonicalType "${listingData.canonicalType}" does not belong to category "${canonicalCategory}".`
+          });
+          return;
+        }
+      }
+
+      const hasTitle = Boolean(listingData.title && String(listingData.title).trim().length > 0);
+      const hasLocation = Boolean((listingData.location && String(listingData.location).trim().length > 0) || (listingData.city && String(listingData.city).trim().length > 0));
+      const hasPrice = typeof listingData.price === 'number' && listingData.price > 0;
+      const hasPhotos = (Array.isArray(listingData.images) && listingData.images.length > 0) ||
+                        (Array.isArray(listingData.labeledImages) && listingData.labeledImages.length > 0);
+      const isComplete = hasTitle && hasLocation && hasPrice && hasPhotos;
+
+      let status = listingData.status || 'published';
+      if (!isVerified) {
+        status = (status === 'draft' || !isComplete) ? 'draft' : 'pending';
+      } else {
+        status = (status === 'draft' || !isComplete) ? 'draft' : status;
+      }
+
+      const serverNow = new Date().toISOString();
+      const docRef = adminDb.collection('listings').doc();
+      const payload = {
+        ...listingData,
+        id: docRef.id,
+        hostId,
+        isHostVerified: isVerified,
+        status,
+        createdAt: serverNow,
+        updatedAt: serverNow
+      };
+
+      await docRef.set(payload);
+      res.status(201).json({ success: true, id: docRef.id, status, isHostVerified: isVerified });
+    } catch (err: any) {
+      console.error("[API] create listing error:", err);
+      res.status(500).json({ success: false, error: err.message || "Failed to create listing." });
+    }
+  });
+
+  /**
+   * PATCH /api/listings/:id
+   * Authoritative server-side update of a listing.
+   * Enforces ownership, prevents unverified hosts from publishing, and preserves draft states.
+   */
+  app.patch("/api/listings/:id", async (req, res) => {
+    try {
+      const user = await authenticateRequest(req);
+      if (!user) {
+        res.status(401).json({ success: false, error: "Unauthorized: Sign-in required." });
+        return;
+      }
+
+      const { id } = req.params;
+      const updates = req.body || {};
+      const adminDb = getPrivilegedFirestore();
+      const listingRef = adminDb.collection('listings').doc(id);
+      const snap = await listingRef.get();
+
+      if (!snap.exists) {
+        res.status(404).json({ success: false, error: "Listing not found." });
+        return;
+      }
+
+      const current = snap.data() || {};
+      const isOwner = current.hostId === user.uid;
+      const adminCheck = isUserAdmin(user);
+
+      if (!isOwner && !adminCheck) {
+        res.status(403).json({ success: false, error: "Forbidden: You can only edit your own listings." });
+        return;
+      }
+
+      // Backward-compatible canonical taxonomy validation on update
+      if (updates.canonicalType) {
+        if (!isCanonicalAccommodationTypeId(updates.canonicalType)) {
+          res.status(400).json({
+            success: false,
+            error: `Invalid canonicalType: "${updates.canonicalType}". Must be a valid MozBook canonical accommodation type.`
+          });
+          return;
+        }
+
+        const canonicalCategory = updates.canonicalCategory || updates.parentCategory;
+        if (canonicalCategory && !isValidCanonicalCategoryTypePair(canonicalCategory, updates.canonicalType)) {
+          res.status(400).json({
+            success: false,
+            error: `Invalid taxonomy combination: canonicalType "${updates.canonicalType}" does not belong to category "${canonicalCategory}".`
+          });
+          return;
+        }
+      }
+
+      // If updating status to published, verify host is approved
+      if (updates.status === 'published' && !adminCheck) {
+        const userDoc = await adminDb.collection('users').doc(user.uid).get();
+        const udata = userDoc.exists ? userDoc.data() : {};
+        const isVerified = udata?.verificationStatus === 'verified' || udata?.isHostVerified === true;
+        if (!isVerified) {
+          updates.status = 'pending';
+        }
+      }
+
+      updates.updatedAt = new Date().toISOString();
+      await listingRef.update(updates);
+
+      res.status(200).json({ success: true, id, status: updates.status || current.status });
+    } catch (err: any) {
+      console.error("[API] update listing error:", err);
+      res.status(500).json({ success: false, error: err.message || "Failed to update listing." });
+    }
+  });
+
+  /**
    * GET /api/admin/financials/overview
    * Authoritative financial & reconciliation metrics for administrator console.
    * Strictly verifies administrator credentials, deduplicates records, and
@@ -541,13 +1094,12 @@ async function startServer() {
   app.get("/api/admin/financials/overview", async (req, res) => {
     try {
       const user = await authenticateRequest(req);
-      if (!user) {
-        res.status(401).json({ success: false, error: "Authentication required." });
-        return;
-      }
-
-      if (!isUserAdmin(user)) {
-        res.status(403).json({ success: false, error: "Forbidden: Administrator privileges required." });
+      const authResult = await authorizeAdminRequest(user, ADMIN_PERMISSIONS.REPORTS_VIEW);
+      if (!authResult.authorized) {
+        res.status(authResult.statusCode).json({
+          success: false,
+          error: authResult.error || "Forbidden: Administrator privileges required with reports:view permission."
+        });
         return;
       }
 
@@ -938,6 +1490,89 @@ async function startServer() {
   });
 
   /**
+   * Elevated Permission Boundary: Customer Refund Approval
+   * Stage 2 Requirement: Refund approval requires explicit `refunds:approve` permission.
+   * Distinct capability, not implied by generic sub-admin role.
+   */
+  app.post("/api/admin/financials/refunds/:refundId/approve", async (req, res) => {
+    try {
+      const user = await authenticateRequest(req);
+      const authResult = await authorizeAdminRequest(user, ADMIN_PERMISSIONS.REFUNDS_APPROVE);
+      if (!authResult.authorized) {
+        res.status(authResult.statusCode).json({
+          success: false,
+          error: authResult.error || "Forbidden: Missing required elevated permission 'refunds:approve'."
+        });
+        return;
+      }
+
+      res.status(200).json({
+        success: true,
+        message: "Refund approval authorization verified.",
+        refundId: req.params.refundId,
+        authorizedBy: authResult.context?.email
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message || "Authorization check failed." });
+    }
+  });
+
+  /**
+   * Elevated Permission Boundary: Partner Escrow Payout Approval
+   * Stage 2 Requirement: Transaction approval requires explicit `transactions:approve` permission.
+   * Distinct capability, neither implies nor is implied by refund approval.
+   */
+  app.post("/api/admin/financials/payouts/:payoutId/approve", async (req, res) => {
+    try {
+      const user = await authenticateRequest(req);
+      const authResult = await authorizeAdminRequest(user, ADMIN_PERMISSIONS.TRANSACTIONS_APPROVE);
+      if (!authResult.authorized) {
+        res.status(authResult.statusCode).json({
+          success: false,
+          error: authResult.error || "Forbidden: Missing required elevated permission 'transactions:approve'."
+        });
+        return;
+      }
+
+      res.status(200).json({
+        success: true,
+        message: "Transaction payout authorization verified.",
+        payoutId: req.params.payoutId,
+        authorizedBy: authResult.context?.email
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message || "Authorization check failed." });
+    }
+  });
+
+  /**
+   * GET /api/admin/financials/reconciliation
+   * Reconciles authoritative transaction ledger with partner balances.
+   * Requires operational `reports:view` permission.
+   */
+  app.get("/api/admin/financials/reconciliation", async (req, res) => {
+    try {
+      const user = await authenticateRequest(req);
+      const authResult = await authorizeAdminRequest(user, ADMIN_PERMISSIONS.REPORTS_VIEW);
+      if (!authResult.authorized) {
+        res.status(authResult.statusCode).json({
+          success: false,
+          error: authResult.error || "Forbidden: Missing required permission 'reports:view'."
+        });
+        return;
+      }
+
+      res.status(200).json({
+        success: true,
+        message: "Reconciliation access authorized.",
+        authorizedAdmin: authResult.context?.email
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message || "Authorization check failed." });
+    }
+  });
+
+  /**
    * GET /api/bookings/:bookingId/status
    * Authoritative reservation status inquiry with strict ownership verification.
    * Only the booking customer, host, or admin can access.
@@ -1020,6 +1655,24 @@ async function startServer() {
   });
 
   /**
+  /**
+   * GET /api/webhooks/paysuite
+   * Diagnostic health & metadata route for verifying PaySuite webhook configuration and readiness.
+   */
+  app.get("/api/webhooks/paysuite", (_req, res) => {
+    res.status(200).json({
+      status: "active",
+      gateway: "PaySuite",
+      service: "MozBook Webhook Handler",
+      method: "POST",
+      signatureHeader: "X-Signature",
+      algorithm: "HMAC-SHA256",
+      webhookUrl: getProductionWebhookUrl(),
+      configured: Boolean(process.env.PAYSUITE_WEBHOOK_SECRET && process.env.PAYSUITE_WEBHOOK_SECRET !== 'MY_PAYSUITE_WEBHOOK_SECRET')
+    });
+  });
+
+  /**
    * POST /api/webhooks/paysuite
    * Official PaySuite Webhook Verification & Authoritative Settlement (Stage 2C)
    *
@@ -1030,7 +1683,7 @@ async function startServer() {
    */
   app.post("/api/webhooks/paysuite", async (req, res) => {
     try {
-      const signature = (req.headers['x-signature'] || req.headers['x-webhook-signature']) as string | undefined;
+      const signature = (req.headers['x-signature'] || req.headers['x-webhook-signature'] || req.headers['x-paysuite-signature']) as string | undefined;
       const rawBody = (req as any).rawBody || Buffer.from(JSON.stringify(req.body), 'utf8');
 
       const result = await processPaySuiteWebhook(req.body, rawBody, signature);
@@ -2873,10 +3526,7 @@ Output strictly a JSON object matching this schema:
     const vite = await createViteServer({
       server: {
         middlewareMode: true,
-        hmr: {
-          server: httpServer,
-          clientPort: 443,
-        },
+        hmr: false,
       },
       appType: "spa",
     });

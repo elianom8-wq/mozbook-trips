@@ -31,7 +31,7 @@ interface AdminLayoutProps {
 }
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
-  const { user, logout, isAdmin, loading } = useAuth();
+  const { user, logout, isAdmin, isMaster, loading } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -186,9 +186,13 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
               <span className="font-mono text-xs tracking-wider uppercase font-bold text-slate-100 sm:hidden">
                 OPERATIONS CONSOLE
               </span>
-              <span className="bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider flex items-center gap-1">
+              <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider flex items-center gap-1 border ${
+                isMaster 
+                  ? 'bg-purple-500/20 text-purple-300 border-purple-500/30' 
+                  : 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
+              }`}>
                 <ShieldCheck size={11} />
-                Admin
+                {isMaster ? 'Master Admin' : 'Admin'}
               </span>
             </div>
           </div>

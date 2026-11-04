@@ -12,6 +12,8 @@ import {
   Heart, 
   MapPin, 
   Shield, 
+  Clock,
+  ArrowRight,
   Calendar as CalendarIcon,
   Navigation,
   Utensils,
@@ -52,7 +54,7 @@ import {
   Bed,
   Users
 } from 'lucide-react';
-import { getListingById, Listing, NearbyPlace, isOfferActive, formatOfferDateRange } from '../services/listingService';
+import { getListingById, Listing, NearbyPlace, isOfferActive, formatOfferDateRange, formatPhysicalAddress } from '../services/listingService';
 import { travelGroupService } from '../services/travelGroupService';
 import { useAuth } from '../context/AuthContext';
 import { AMENITIES_LIST } from '../data/amenities';
@@ -107,7 +109,7 @@ export default function ListingDetails() {
   const [activeNearbyCategory, setActiveNearbyCategory] = useState<string>('all');
   const [copiedShare, setCopiedShare] = useState(false);
   const [isSaved, setIsSaved] = useState(false);
-  const { login, user } = useAuth();
+  const { login, user, isAdmin } = useAuth();
   const navigate = useNavigate();
 
   // Stay Reservation Configuration State (Unauthenticated users can configure without login)
@@ -122,30 +124,36 @@ export default function ListingDetails() {
 
   useEffect(() => {
     if (id) {
-      getListingById(id).then(data => {
-        setListing(data);
-        setLoading(false);
+      getListingById(id)
+        .then(data => {
+          setListing(data);
+          setLoading(false);
 
-        if (data) {
-          // Default initial dates based on listing availability or next-day window
-          const today = new Date();
-          const start = new Date(today);
-          start.setDate(today.getDate() + 1);
-          const defaultIn = (data.availableFrom && data.availableFrom.length >= 10)
-            ? data.availableFrom
-            : start.toISOString().split('T')[0];
+          if (data) {
+            // Default initial dates based on listing availability or next-day window
+            const today = new Date();
+            const start = new Date(today);
+            start.setDate(today.getDate() + 1);
+            const defaultIn = (data.availableFrom && data.availableFrom.length >= 10)
+              ? data.availableFrom
+              : start.toISOString().split('T')[0];
 
-          const nights = Math.max(data.minNights || 1, 3);
-          const end = new Date(defaultIn);
-          end.setDate(end.getDate() + nights);
-          const defaultOut = (data.availableTo && data.availableTo.length >= 10)
-            ? data.availableTo
-            : end.toISOString().split('T')[0];
+            const nights = Math.max(data.minNights || 1, 3);
+            const end = new Date(defaultIn);
+            end.setDate(end.getDate() + nights);
+            const defaultOut = (data.availableTo && data.availableTo.length >= 10)
+              ? data.availableTo
+              : end.toISOString().split('T')[0];
 
-          setCheckInDate(defaultIn);
-          setCheckOutDate(defaultOut);
-        }
-      });
+            setCheckInDate(defaultIn);
+            setCheckOutDate(defaultOut);
+          }
+        })
+        .catch(err => {
+          console.warn('Could not load listing details:', err);
+          setListing(null);
+          setLoading(false);
+        });
     }
   }, [id]);
 
@@ -171,6 +179,47 @@ export default function ListingDetails() {
       <button onClick={() => navigate('/')} className="px-6 py-2 bg-[#009A60] hover:bg-[#008250] text-white rounded-lg transition-colors">Go back home</button>
     </div>
   );
+
+  const isOwnerOrAdmin = Boolean(
+    (user && listing.hostId && user.uid === listing.hostId) ||
+    isAdmin
+  );
+
+  const isUnpublished = Boolean(
+    listing.status && listing.status !== 'published'
+  );
+
+  // Requirement 3: Keep listings hidden from public search, Discover, and guest-facing accommodation pages until approval
+  if (isUnpublished && !isOwnerOrAdmin) {
+    return (
+      <div className="max-w-xl mx-auto px-4 py-24 text-center space-y-6">
+        <div className="w-16 h-16 rounded-2xl bg-amber-100 text-amber-800 flex items-center justify-center mx-auto border-2 border-amber-300">
+          <Clock size={32} className="text-amber-700" />
+        </div>
+        <div className="space-y-2">
+          <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-amber-100 text-amber-900 rounded-full text-xs font-bold border border-amber-300">
+            <ShieldCheck size={14} />
+            <span>Listing Awaiting Approval</span>
+          </div>
+          <h2 className="text-2xl sm:text-3xl font-extrabold text-gray-900 tracking-tight">
+            Accommodation Currently Unpublished
+          </h2>
+          <p className="text-sm text-gray-600 max-w-md mx-auto leading-relaxed">
+            This property is currently awaiting host verification review by MozBook Operations and is not open for public viewing or booking. Once verified, it will be published and available to reserve.
+          </p>
+        </div>
+        <div className="pt-2">
+          <Link
+            to="/discover"
+            className="inline-flex items-center gap-2 px-6 py-3 bg-[#009A60] hover:bg-[#008250] text-white text-sm font-bold rounded-xl transition-colors shadow-sm"
+          >
+            <span>Explore Verified MozBook Stays</span>
+            <ArrowRight size={16} />
+          </Link>
+        </div>
+      </div>
+    );
+  }
 
   // Prepare images with labels
   const labeledImages = listing.labeledImages && listing.labeledImages.length > 0
@@ -205,6 +254,35 @@ export default function ListingDetails() {
 
   return (
     <main className="max-w-7xl mx-auto px-4 md:px-8 py-8 pb-32 md:pb-36">
+      {/* Requirement 3 & 4: Unpublished Preview Banner for Host / Admin */}
+      {isUnpublished && (
+        <div className="mb-6 p-4 sm:p-5 bg-amber-50 border-2 border-amber-300 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm animate-fade-in">
+          <div className="flex items-start gap-3.5">
+            <div className="w-10 h-10 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center shrink-0 mt-0.5 border border-amber-300">
+              <Clock size={20} className="text-amber-700" />
+            </div>
+            <div>
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 bg-amber-200 text-amber-900 rounded-md text-[10px] font-black uppercase tracking-wider mb-1">
+                <ShieldCheck size={12} />
+                <span>Approval Pending · Host Unpublished Preview</span>
+              </div>
+              <h3 className="text-sm sm:text-base font-bold text-gray-950">
+                This accommodation is unpublished and awaiting host verification approval.
+              </h3>
+              <p className="text-xs text-amber-950/80 mt-0.5 leading-relaxed max-w-2xl">
+                As the property host, you can preview this listing. It is currently hidden from public search and cannot be booked by travelers until your documents are approved by the MozBook Operations team. Once approved, this listing will be published automatically.
+              </p>
+            </div>
+          </div>
+          <Link
+            to={`/host/edit/${listing.id}`}
+            className="shrink-0 px-4 py-2 bg-amber-200 hover:bg-amber-300 text-amber-950 text-xs font-bold rounded-xl transition-colors border border-amber-400/50 shadow-2xs"
+          >
+            Edit Property
+          </Link>
+        </div>
+      )}
+
       {/* Linked Travel Group Banner */}
       {linkedGroupId && (
         <div className="mb-4 bg-emerald-50 border border-emerald-200 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
@@ -270,13 +348,15 @@ export default function ListingDetails() {
           </div>
 
           <div className="flex items-center gap-3">
-            <Link
-              to={`/host/edit/${listing.id}`}
-              className="flex items-center gap-1.5 text-xs sm:text-sm font-semibold bg-gray-900 hover:bg-black text-white px-3 py-1.5 rounded-lg transition-colors shadow-2xs"
-            >
-              <Edit3 size={14} />
-              <span>Edit Listing & Offers</span>
-            </Link>
+            {isOwnerOrAdmin && (
+              <Link
+                to={`/host/edit/${listing.id}`}
+                className="flex items-center gap-1.5 text-xs sm:text-sm font-semibold bg-gray-900 hover:bg-black text-white px-3 py-1.5 rounded-lg transition-colors shadow-2xs"
+              >
+                <Edit3 size={14} />
+                <span>Edit Listing & Offers</span>
+              </Link>
+            )}
             <button 
               onClick={handleShare}
               className="flex items-center gap-1.5 text-xs sm:text-sm font-semibold hover:bg-gray-100 px-3 py-1.5 rounded-lg border border-gray-200 transition-colors"
@@ -741,9 +821,16 @@ export default function ListingDetails() {
           <div className="space-y-4">
             <div>
               <h3 className="text-xl font-bold text-gray-900">Where you'll be</h3>
-              <p className="text-sm text-gray-500">
-                {listing.location} · {listing.city ? `${listing.city}, ` : ''}{listing.province || ''}
+              <p className="text-sm text-gray-600 font-medium mt-1">
+                {listing.addressDetails 
+                  ? formatPhysicalAddress(listing.addressDetails) 
+                  : (listing.location || `${listing.city || ''}, ${listing.province || ''}`)}
               </p>
+              {listing.directionsLandmark && (
+                <p className="text-xs text-gray-500 mt-1 italic flex items-center gap-1.5">
+                  <span className="font-semibold not-italic text-gray-700">Landmark & Directions:</span> {listing.directionsLandmark}
+                </p>
+              )}
             </div>
 
             {listing.coordinates && (
@@ -1095,21 +1182,33 @@ export default function ListingDetails() {
                     </div>
                   )}
 
-                  <button 
-                    type="button"
-                    onClick={handleReserveStay}
-                    disabled={isSubmitting}
-                    className="w-full bg-[#009A60] hover:bg-[#008250] disabled:bg-gray-400 text-white font-bold py-3.5 rounded-xl shadow-md hover:shadow-lg transition-all text-base cursor-pointer flex items-center justify-center gap-2"
-                  >
-                    {isSubmitting ? (
-                      <>
-                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                        <span>Submitting Reservation...</span>
-                      </>
-                    ) : (
-                      <span>{user ? 'Reserve Now' : 'Sign In to Reserve'}</span>
-                    )}
-                  </button>
+                  {isUnpublished ? (
+                    <div className="p-4 bg-amber-50 border border-amber-300 rounded-xl text-center space-y-1">
+                      <div className="flex items-center justify-center gap-1.5 text-xs font-bold text-amber-900">
+                        <Clock size={15} className="text-amber-700" />
+                        <span>Reservations Disabled (Unpublished Preview)</span>
+                      </div>
+                      <p className="text-[11px] text-amber-800">
+                        Booking is disabled while host identity verification is awaiting approval.
+                      </p>
+                    </div>
+                  ) : (
+                    <button 
+                      type="button"
+                      onClick={handleReserveStay}
+                      disabled={isSubmitting}
+                      className="w-full bg-[#009A60] hover:bg-[#008250] disabled:bg-gray-400 text-white font-bold py-3.5 rounded-xl shadow-md hover:shadow-lg transition-all text-base cursor-pointer flex items-center justify-center gap-2"
+                    >
+                      {isSubmitting ? (
+                        <>
+                          <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                          <span>Submitting Reservation...</span>
+                        </>
+                      ) : (
+                        <span>{user ? 'Reserve Now' : 'Sign In to Reserve'}</span>
+                      )}
+                    </button>
+                  )}
 
                   <p className="text-center text-xs text-gray-400">You won't be charged yet — Status: Unpaid</p>
                   <Link

@@ -17,12 +17,21 @@ import {
   purgeAllUserSessionData
 } from '../services/authSessionManager';
 
-export const ADMIN_EMAIL = 'mozbookinfo@gmail.com';
+import { 
+  ADMIN_PERMISSIONS, 
+  AdminPermission, 
+  MASTER_ADMIN_EMAIL 
+} from '../types/adminPermissions';
+
+export const ADMIN_EMAIL = MASTER_ADMIN_EMAIL;
 
 interface AuthContextType {
   user: User | null;
   profile: any | null;
   isAdmin: boolean;
+  isMaster: boolean;
+  adminPermissions: AdminPermission[];
+  hasPermission: (permission: AdminPermission) => boolean;
   hasCustomClaim: boolean;
   tokenClaims: Record<string, any> | null;
   loading: boolean;
@@ -37,6 +46,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<any | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [isMaster, setIsMaster] = useState(false);
+  const [adminPermissions, setAdminPermissions] = useState<AdminPermission[]>([]);
   const [hasCustomClaim, setHasCustomClaim] = useState(false);
   const [tokenClaims, setTokenClaims] = useState<Record<string, any> | null>(null);
   const [loading, setLoading] = useState(true);
@@ -57,14 +68,43 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       console.warn('Could not inspect token claims:', e);
     }
 
-    const emailIsAdmin = currentUser.email?.toLowerCase() === ADMIN_EMAIL.toLowerCase();
-    const authorized = customClaimRoleAdmin || emailIsAdmin;
+    const emailIsMaster = currentUser.email?.toLowerCase() === MASTER_ADMIN_EMAIL.toLowerCase();
+
+    // Query server-authoritative endpoint /api/admin/me
+    let serverIsAdmin = false;
+    let serverIsMaster = false;
+    let serverPerms: AdminPermission[] = [];
+
+    try {
+      const idToken = await currentUser.getIdToken();
+      const resp = await fetch('/api/admin/me', {
+        headers: { 'Authorization': `Bearer ${idToken}` }
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        if (data.success && data.admin) {
+          serverIsAdmin = true;
+          serverIsMaster = Boolean(data.admin.isMaster);
+          serverPerms = Array.isArray(data.admin.permissions) ? data.admin.permissions : [];
+        }
+      }
+    } catch (err) {
+      console.warn('Could not query /api/admin/me:', err);
+    }
+
+    const authorized = serverIsAdmin || emailIsMaster || customClaimRoleAdmin;
+    const finalIsMaster = serverIsMaster || emailIsMaster;
+    const finalPerms = serverPerms.length > 0 
+      ? serverPerms 
+      : (finalIsMaster ? (Object.values(ADMIN_PERMISSIONS) as AdminPermission[]) : []);
 
     setIsAdmin(authorized);
+    setIsMaster(finalIsMaster);
+    setAdminPermissions(finalPerms);
     setHasCustomClaim(customClaimRoleAdmin);
     setTokenClaims(claimsObj);
 
-    return { authorized, customClaimRoleAdmin };
+    return { authorized, customClaimRoleAdmin, isMaster: finalIsMaster, permissions: finalPerms };
   };
 
   useEffect(() => {
@@ -73,6 +113,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // so no intermediate render can ever inherit previous user's admin privileges
       setLoading(true);
       setIsAdmin(false);
+      setIsMaster(false);
+      setAdminPermissions([]);
       setHasCustomClaim(false);
       setTokenClaims(null);
       setProfile(null);
@@ -142,10 +184,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         } catch (error) {
           console.error("Error fetching or syncing user profile:", error);
           setIsAdmin(false);
+          setIsMaster(false);
+          setAdminPermissions([]);
         }
       } else {
         setProfile(null);
         setIsAdmin(false);
+        setIsMaster(false);
+        setAdminPermissions([]);
         setHasCustomClaim(false);
         setTokenClaims(null);
         try {
@@ -213,6 +259,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const logout = async () => {
     setLoading(true);
     setIsAdmin(false);
+    setIsMaster(false);
+    setAdminPermissions([]);
     setHasCustomClaim(false);
     setTokenClaims(null);
     setProfile(null);
@@ -239,11 +287,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return authorized;
   };
 
+  const hasPermission = (permission: AdminPermission): boolean => {
+    if (!isAdmin) return false;
+    if (isMaster) return true;
+    return adminPermissions.includes(permission);
+  };
+
   return (
     <AuthContext.Provider value={{ 
       user, 
       profile, 
       isAdmin, 
+      isMaster,
+      adminPermissions,
+      hasPermission,
       hasCustomClaim,
       tokenClaims,
       loading, 

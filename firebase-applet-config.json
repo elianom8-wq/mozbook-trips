@@ -6,5 +6,7 @@
   "firestoreDatabaseId": "ai-studio-24a2af21-5bd3-4b75-a8bd-e734255b894e",
   "storageBucket": "hip-graph-485101-k7.firebasestorage.app",
   "messagingSenderId": "20944919396",
-  "measurementId": ""
+  "measurementId": "",
+  "oAuthClientId": "20944919396-576g7kmjvnch46qmjd3q52husqpelh4m.apps.googleusercontent.com",
+  "recaptchaSiteKey": ""
 }

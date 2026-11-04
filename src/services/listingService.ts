@@ -220,6 +220,47 @@ export function calculateTotalLodgeUnits(accommodations?: LodgeAccommodation[]):
 
 export const calculateTotalUnits = calculateTotalLodgeUnits;
 
+export const MOZAMBIQUE_PROVINCES = [
+  'Maputo Cidade',
+  'Maputo Província',
+  'Gaza',
+  'Inhambane',
+  'Sofala',
+  'Manica',
+  'Tete',
+  'Zambézia',
+  'Nampula',
+  'Cabo Delgado',
+  'Niassa'
+];
+
+export interface PhysicalAddress {
+  country: string;
+  province: string;
+  city: string;
+  neighborhood?: string;
+  street?: string;
+  buildingNumber?: string;
+  buildingName?: string;
+  postalCode?: string;
+  directionsLandmark?: string;
+}
+
+export function formatPhysicalAddress(addr?: Partial<PhysicalAddress> | null): string {
+  if (!addr) return '';
+  const parts: string[] = [];
+  if (addr.buildingName) parts.push(addr.buildingName);
+  const streetPart = [addr.street, addr.buildingNumber].filter(Boolean).join(', ');
+  if (streetPart) parts.push(streetPart);
+  if (addr.neighborhood) parts.push(`Bairro ${addr.neighborhood}`);
+  if (addr.city) parts.push(addr.city);
+  if (addr.province && (!addr.city || !addr.province.toLowerCase().includes(addr.city.toLowerCase()))) {
+    parts.push(addr.province);
+  }
+  if (addr.country) parts.push(addr.country);
+  return parts.join(', ');
+}
+
 export interface Listing {
   id?: string;
   title: string;
@@ -244,6 +285,17 @@ export interface Listing {
   city?: string;
   province?: string;
   country?: string;
+  neighborhood?: string;
+  street?: string;
+  buildingNumber?: string;
+  buildingName?: string;
+  postalCode?: string;
+  directionsLandmark?: string;
+  addressDetails?: PhysicalAddress;
+  locationType?: 'gps' | 'address' | 'both';
+  hasGpsLocation?: boolean;
+  hasPhysicalAddress?: boolean;
+  pinSource?: 'gps' | 'map_pin' | 'search' | 'default';
   availableFrom?: string;
   availableTo?: string;
   dates?: string;
@@ -263,10 +315,11 @@ export interface Listing {
   isNonRefundable?: boolean;
   // Canonical Accommodation Taxonomy (Stage 3C - Optional & Additive)
   canonicalType?: CanonicalAccommodationTypeId;
+  canonicalCategory?: string;
   operatingModels?: OperatingModelId[];
   settings?: SettingId[];
   classificationStatus?: ClassificationStatus;
-  status?: 'published' | 'pending' | 'draft' | 'archived' | 'paused' | 'suspended';
+  status?: 'published' | 'pending' | 'pending_approval' | 'pending_verification' | 'draft' | 'archived' | 'paused' | 'suspended' | 'rejected';
   isLocalDraft?: boolean;
   createdAt?: any;
   updatedAt?: any;
@@ -276,16 +329,32 @@ const COLLECTION = 'listings';
 const COMMUNITY_COLLECTION = 'community_places';
 const VERIFICATIONS_COLLECTION = 'verifications';
 
-export const getListings = async (category?: string) => {
+export const getListings = async (category?: string, options?: { includeUnpublished?: boolean }) => {
   const path = COLLECTION;
   try {
-    const q = category 
-      ? query(collection(db, path), where('category', '==', category))
+    const constraints: any[] = [];
+    if (!options?.includeUnpublished) {
+      constraints.push(where('status', '==', 'published'));
+    }
+    if (category) {
+      constraints.push(where('category', '==', category));
+    }
+    
+    const q = constraints.length > 0
+      ? query(collection(db, path), ...constraints)
       : collection(db, path);
     
     const snapshot = await getDocs(q);
-    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Listing));
-  } catch (error) {
+    let items = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Listing));
+    if (!options?.includeUnpublished) {
+      items = items.filter(l => l.status === 'published');
+    }
+    return items;
+  } catch (error: any) {
+    if (error?.code === 'permission-denied' || error?.message?.includes('permission-denied')) {
+      console.warn('Listing read permission denied, returning empty list.');
+      return [];
+    }
     handleFirestoreError(error, OperationType.GET, path);
     return [];
   }
@@ -315,7 +384,12 @@ export const getListingById = async (id: string) => {
       return { id: snapshot.id, ...snapshot.data() } as Listing;
     }
     return null;
-  } catch (error) {
+  } catch (error: any) {
+    // If permission denied (e.g. unpublished listing accessed without owner/admin authorization), return null gracefully
+    if (error?.code === 'permission-denied' || error?.message?.includes('permission-denied') || error?.message?.includes('Missing or insufficient permissions')) {
+      console.warn(`Listing ${id} read permission denied.`);
+      return null;
+    }
     handleFirestoreError(error, OperationType.GET, path);
     return null;
   }
@@ -417,14 +491,26 @@ export const createListing = async (listing: Omit<Listing, 'id' | 'createdAt'>) 
     let targetStatus = listing.status || 'published';
     let isHostVerified = Boolean(listing.isHostVerified);
 
+    const hasPhotos = (Array.isArray(listing.images) && listing.images.length > 0) ||
+                      (Array.isArray(listing.labeledImages) && listing.labeledImages.length > 0);
+    const isComplete = Boolean(
+      listing.title?.trim() &&
+      (listing.location?.trim() || listing.city?.trim()) &&
+      typeof listing.price === 'number' && listing.price > 0 &&
+      hasPhotos
+    );
+
     if (hostId) {
       const statusInfo = await checkHostVerificationStatus(hostId);
       if (statusInfo.isSuspended) {
         throw new Error('Host account is suspended. Cannot create or publish listings.');
       }
       isHostVerified = statusInfo.isVerified;
-      if (targetStatus !== 'draft') {
-        targetStatus = statusInfo.isVerified ? (listing.status || 'published') : 'pending';
+      if (!isHostVerified) {
+        // While waiting for verification, listing is saved as pending (if complete) or draft (if incomplete)
+        targetStatus = (targetStatus === 'draft' || !isComplete) ? 'draft' : 'pending';
+      } else {
+        targetStatus = (targetStatus === 'draft' || !isComplete) ? 'draft' : (listing.status || 'published');
       }
     }
 
@@ -446,6 +532,17 @@ export const createListing = async (listing: Omit<Listing, 'id' | 'createdAt'>) 
 export const updateListing = async (id: string, updates: Partial<Listing>) => {
   const path = `${COLLECTION}/${id}`;
   try {
+    // If attempting to publish, enforce that host is verified
+    if (updates.status === 'published') {
+      const hostId = updates.hostId || auth.currentUser?.uid;
+      if (hostId) {
+        const statusInfo = await checkHostVerificationStatus(hostId);
+        if (!statusInfo.isVerified) {
+          updates.status = 'pending';
+        }
+      }
+    }
+
     const payload = sanitizeFirestorePayload({
       ...updates,
       updatedAt: serverTimestamp(),
@@ -532,12 +629,31 @@ export const getListingSpecialOffer = async (listingId: string): Promise<Special
   }
 };
 
-export const subscribeToListings = (callback: (listings: Listing[]) => void) => {
+export const subscribeToListings = (
+  callback: (listings: Listing[]) => void,
+  options?: { includeUnpublished?: boolean }
+) => {
   const path = COLLECTION;
-  return onSnapshot(collection(db, path), (snapshot) => {
-    const listings = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Listing));
+  const constraints: any[] = [];
+  if (!options?.includeUnpublished) {
+    constraints.push(where('status', '==', 'published'));
+  }
+  const q = constraints.length > 0
+    ? query(collection(db, path), ...constraints)
+    : collection(db, path);
+
+  return onSnapshot(q, (snapshot) => {
+    let listings = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Listing));
+    if (!options?.includeUnpublished) {
+      listings = listings.filter(l => l.status === 'published');
+    }
     callback(listings);
-  }, (error) => {
+  }, (error: any) => {
+    if (error?.code === 'permission-denied' || error?.message?.includes('permission-denied')) {
+      console.warn('Subscription permission denied, returning empty list.');
+      callback([]);
+      return;
+    }
     handleFirestoreError(error, OperationType.GET, path);
   });
 };
@@ -614,9 +730,9 @@ export const getSuggestedNearbyPlaces = async (
     console.warn('Could not fetch community_places:', e);
   }
 
-  // 2. Fetch existing listings to aggregate community nearby places
+  // 2. Fetch existing listings to aggregate community nearby places (only published listings are visible to public)
   try {
-    const snapshot = await getDocs(collection(db, COLLECTION));
+    const snapshot = await getDocs(query(collection(db, COLLECTION), where('status', '==', 'published')));
     const allListings = snapshot.docs.map(d => d.data() as Listing);
 
     for (const listing of allListings) {
@@ -1274,6 +1390,43 @@ export const updateVerificationStatus = async (
   status: VerificationStatus, 
   adminNotes?: string
 ): Promise<UpdateVerificationStatusResult> => {
+  // Authoritative server-side execution if authenticated
+  if (auth.currentUser && typeof fetch !== 'undefined') {
+    try {
+      const idToken = await auth.currentUser.getIdToken();
+      const res = await fetch(`/api/admin/hosts/${userId}/verify`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${idToken}`,
+          'x-user-id': auth.currentUser.uid,
+          'x-user-email': auth.currentUser.email || ''
+        },
+        body: JSON.stringify({
+          status,
+          adminNotes: adminNotes || ''
+        })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        return {
+          success: true,
+          verificationUpdated: true,
+          userProfileUpdated: true,
+          listingSyncResult: {
+            success: true,
+            totalListingsFound: data.totalListingsFound || 0,
+            eligibleListingsUpdated: data.publishedCount || 0,
+            skippedIneligibleCount: data.draftIncompleteCount || 0
+          }
+        };
+      }
+    } catch (apiErr) {
+      console.warn('Backend /api/admin/hosts/:userId/verify fell through to client batch:', apiErr);
+    }
+  }
+
   const path = `${VERIFICATIONS_COLLECTION}/${verificationId}`;
   try {
     await updateDoc(doc(db, VERIFICATIONS_COLLECTION, verificationId), {

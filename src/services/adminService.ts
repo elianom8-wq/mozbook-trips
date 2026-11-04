@@ -93,26 +93,17 @@ export const adminService = {
               metadata
             })
           });
-          if (res.ok) {
-            recordedViaServer = true;
+          if (!res.ok) {
+            console.warn('[AdminService] Backend audit recording returned status:', res.status);
           }
         } catch (apiErr) {
-          // Fall through to direct Firestore write
-        }
-
-        if (!recordedViaServer) {
-          // Direct authenticated Firestore write
-          const firestorePayload: any = {
-            ...logEntry,
-            createdAt: serverTimestamp()
-          };
-          await setDoc(doc(db, 'admin_audit_logs', id), firestorePayload);
+          console.warn('[AdminService] Backend audit recording network error:', apiErr);
         }
       } else {
         console.warn('Postponing admin audit log write: auth.currentUser is not yet loaded.');
       }
     } catch (err) {
-      console.warn('Firestore write failed for admin_audit_logs (using local cache):', err);
+      console.warn('Failed to record admin audit log:', err);
     }
 
     return logEntry;

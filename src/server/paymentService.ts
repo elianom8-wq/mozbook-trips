@@ -31,7 +31,9 @@ import {
   listPaySuiteRefunds,
   PaySuiteError, 
   verifyPaySuiteWebhookSignature, 
-  PaySuiteWebhookPayload 
+  PaySuiteWebhookPayload,
+  getProductionAppUrl,
+  getProductionWebhookUrl
 } from './paysuiteClient';
 import { initializeApp as initAdminApp, getApps as getAdminApps, App as AdminApp } from 'firebase-admin/app';
 import { getFirestore as getAdminFirestore, Firestore as AdminFirestore, FieldValue as AdminFieldValue } from 'firebase-admin/firestore';
@@ -62,7 +64,7 @@ export interface CreatePaymentIntentParams {
   };
 }
 
-function parseFirestoreDoc(fields: Record<string, any>): Record<string, any> {
+export function parseFirestoreDoc(fields: Record<string, any>): Record<string, any> {
   const result: Record<string, any> = {};
   for (const [key, val] of Object.entries(fields)) {
     if ('stringValue' in val) result[key] = val.stringValue;
@@ -258,10 +260,10 @@ export async function createPaymentIntent(
   // 8. Construct unique MozBook Payment Registry ID
   const paymentId = `pay_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
   const idempotencyKey = `mb_idem_${bookingId}_${Date.now()}`;
-  const appUrl = process.env.APP_URL || 'http://localhost:3000';
+  const appUrl = getProductionAppUrl();
   const defaultReturnUrl = `${appUrl}/booking/${bookingId}/status?ref=${encodeURIComponent(bookingRef)}`;
   const returnUrl = customReturnUrl || defaultReturnUrl;
-  const webhookUrl = `${appUrl}/api/webhooks/paysuite`;
+  const webhookUrl = getProductionWebhookUrl();
 
   // 9. Call PaySuite production API
   const paysuiteResponse = await requestPaySuitePayment({
@@ -362,10 +364,10 @@ export async function getAuthoritativePayment(paymentId: string): Promise<Paymen
  * Authoritative Admin / Role Authorization Helper
  * Reused across all admin and privileged resource checks.
  */
-export function isUserAdmin(user: { uid: string; email?: string } | null | undefined): boolean {
+export function isUserAdmin(user: { uid: string; email?: string; role?: string } | null | undefined): boolean {
   if (!user) return false;
   const email = user.email?.toLowerCase();
-  return email === 'mozbookinfo@gmail.com' || email === 'admin@mozbook.mz';
+  return email === 'mozbookinfo@gmail.com' || email === 'admin@mozbook.mz' || user.role === 'admin';
 }
 
 /**
@@ -439,9 +441,152 @@ export async function processPaySuiteWebhook(
     };
   }
 
-  const { id: paysuitePaymentId, amount, reference, status: webhookStatus, transaction_id, paid_at } = payload.data;
+  const adminDb = getPrivilegedFirestore();
+  const eventName = payload.event;
+  const data: any = payload.data || {};
+  const { 
+    id: paysuiteId, 
+    payment_id: refundPaymentId, 
+    amount, 
+    reference, 
+    status: webhookStatus, 
+    transaction_id, 
+    paid_at, 
+    reason 
+  } = data;
 
-  if (!paysuitePaymentId && !reference) {
+  // 3. Handle Host Payout Events (payout.completed, payout.failed)
+  if (eventName.startsWith('payout.')) {
+    console.log(`${logPrefix} Processing payout webhook: ${eventName}`);
+    const payoutId = paysuiteId;
+    const payoutRef = reference;
+
+    let matchedPayoutDoc: any = null;
+    try {
+      if (payoutId) {
+        const qSnap = await adminDb.collection('payout_requests')
+          .where('paysuitePayoutId', '==', payoutId)
+          .limit(1)
+          .get();
+        if (!qSnap.empty) {
+          matchedPayoutDoc = qSnap.docs[0];
+        }
+      }
+      if (!matchedPayoutDoc && payoutRef) {
+        const qSnap = await adminDb.collection('payout_requests')
+          .where('reference', '==', payoutRef)
+          .limit(1)
+          .get();
+        if (!qSnap.empty) {
+          matchedPayoutDoc = qSnap.docs[0];
+        } else {
+          const dSnap = await adminDb.collection('payout_requests').doc(payoutRef).get();
+          if (dSnap.exists) {
+            matchedPayoutDoc = dSnap;
+          }
+        }
+      }
+    } catch (payoutErr: any) {
+      console.warn(`${logPrefix} Error querying payout_requests:`, payoutErr.message);
+    }
+
+    if (!matchedPayoutDoc) {
+      console.error(`${logPrefix} No host payout request found for identifier '${payoutId || payoutRef}'.`);
+      return {
+        success: false,
+        statusCode: 404,
+        error: `No host payout request found for PaySuite identifier '${payoutId || payoutRef}'.`
+      };
+    }
+
+    const payoutData = matchedPayoutDoc.data();
+    const isCompleted = eventName === 'payout.completed' || webhookStatus === 'completed';
+    const isFailed = eventName === 'payout.failed' || webhookStatus === 'failed';
+
+    if (isCompleted) {
+      if (payoutData.status === 'completed') {
+        return {
+          success: true,
+          statusCode: 200,
+          status: 'already_completed',
+          message: 'Payout was already completed and settled.'
+        };
+      }
+      try {
+        await matchedPayoutDoc.ref.update({
+          status: 'completed',
+          completedAt: paid_at || new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        });
+        await adminDb.collection('payment_audit_logs').add({
+          eventId: `evt_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+          eventType: eventName,
+          payoutId: matchedPayoutDoc.id,
+          reference: payoutData.reference,
+          amount: payoutData.amount,
+          status: 'completed',
+          timestamp: new Date().toISOString(),
+          createdAtServer: AdminFieldValue.serverTimestamp()
+        });
+        return {
+          success: true,
+          statusCode: 200,
+          status: 'payout_completed',
+          message: 'Payout completed successfully.'
+        };
+      } catch (err: any) {
+        console.error(`${logPrefix} Failed to update payout completion:`, err.message);
+        return {
+          success: false,
+          statusCode: 500,
+          error: `Failed to update payout completion: ${err.message}`
+        };
+      }
+    } else if (isFailed) {
+      if (payoutData.status === 'failed') {
+        return {
+          success: true,
+          statusCode: 200,
+          status: 'already_failed',
+          message: 'Payout failure was already recorded.'
+        };
+      }
+      try {
+        await matchedPayoutDoc.ref.update({
+          status: 'failed',
+          failureReason: reason || 'PaySuite payout delivery failed',
+          updatedAt: new Date().toISOString()
+        });
+        await adminDb.collection('payment_audit_logs').add({
+          eventId: `evt_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+          eventType: eventName,
+          payoutId: matchedPayoutDoc.id,
+          reference: payoutData.reference,
+          amount: payoutData.amount,
+          status: 'failed',
+          timestamp: new Date().toISOString(),
+          createdAtServer: AdminFieldValue.serverTimestamp()
+        });
+        return {
+          success: true,
+          statusCode: 200,
+          status: 'payout_failed_recorded',
+          message: 'Payout failure recorded.'
+        };
+      } catch (err: any) {
+        console.error(`${logPrefix} Failed to update payout failure:`, err.message);
+        return {
+          success: false,
+          statusCode: 500,
+          error: `Failed to update payout failure: ${err.message}`
+        };
+      }
+    }
+  }
+
+  // 4. Validate identifier for payment/refund events
+  const lookupPaymentId = refundPaymentId || paysuiteId;
+  if (!lookupPaymentId && !reference) {
     console.error(`${logPrefix} Malformed webhook data: missing payment id and reference.`);
     return {
       success: false,
@@ -450,16 +595,15 @@ export async function processPaySuiteWebhook(
     };
   }
 
-  // 3. Locate Authoritative MozBook Payment Ledger Record
+  // 5. Locate Authoritative MozBook Payment Ledger Record
   let matchedPayment: PaymentLedgerEntry | null = null;
   let paymentDocId: string | null = null;
-  const adminDb = getPrivilegedFirestore();
 
   try {
-    // Try matching by paysuitePaymentId first
-    if (paysuitePaymentId) {
+    // A. Match by paysuitePaymentId
+    if (lookupPaymentId) {
       const qSnap = await adminDb.collection('payments')
-        .where('paysuitePaymentId', '==', paysuitePaymentId)
+        .where('paysuitePaymentId', '==', lookupPaymentId)
         .limit(1)
         .get();
 
@@ -469,7 +613,7 @@ export async function processPaySuiteWebhook(
       }
     }
 
-    // Fallback: match by bookingRef or payment ID if not found
+    // B. Fallback: match by bookingRef or payment doc ID
     if (!matchedPayment && reference) {
       const qSnap = await adminDb.collection('payments')
         .where('bookingRef', '==', reference)
@@ -480,11 +624,29 @@ export async function processPaySuiteWebhook(
         matchedPayment = qSnap.docs[0].data() as PaymentLedgerEntry;
         paymentDocId = qSnap.docs[0].id;
       } else {
-        // Try direct doc lookup by ID
         const docSnap = await adminDb.collection('payments').doc(reference).get();
         if (docSnap.exists) {
           matchedPayment = docSnap.data() as PaymentLedgerEntry;
           paymentDocId = docSnap.id;
+        }
+      }
+    }
+
+    // C. Fallback for refund events: match by paysuiteRefundId in refunds collection
+    if (!matchedPayment && paysuiteId) {
+      const rSnap = await adminDb.collection('refunds')
+        .where('paysuiteRefundId', '==', paysuiteId)
+        .limit(1)
+        .get();
+
+      if (!rSnap.empty) {
+        const rData = rSnap.docs[0].data();
+        if (rData.paymentId) {
+          const pDoc = await adminDb.collection('payments').doc(rData.paymentId).get();
+          if (pDoc.exists) {
+            matchedPayment = pDoc.data() as PaymentLedgerEntry;
+            paymentDocId = pDoc.id;
+          }
         }
       }
     }
@@ -493,17 +655,17 @@ export async function processPaySuiteWebhook(
   }
 
   if (!matchedPayment || !paymentDocId) {
-    console.error(`${logPrefix} Unknown payment: No MozBook payment record matched (ID: ${paysuitePaymentId}, Ref: ${reference}).`);
+    console.error(`${logPrefix} Unknown payment: No MozBook payment record matched (ID: ${lookupPaymentId || paysuiteId}, Ref: ${reference}).`);
     return {
       success: false,
       statusCode: 404,
-      error: `No MozBook payment record found for PaySuite identifier '${paysuitePaymentId || reference}'.`
+      error: `No MozBook payment record found for PaySuite identifier '${lookupPaymentId || paysuiteId || reference}'.`
     };
   }
 
   console.log(`${logPrefix} Matched payment '${paymentDocId}' (Booking: ${matchedPayment.bookingId}, Ref: ${matchedPayment.bookingRef}).`);
 
-  // 4. Locate and Verify Associated Booking Document
+  // 6. Locate Associated Booking Document
   const targetCollection = matchedPayment.bookingCategory === 'activity' || matchedPayment.bookingCategory === 'trip'
     ? 'activity_bookings'
     : 'bookings';
@@ -527,18 +689,30 @@ export async function processPaySuiteWebhook(
     };
   }
 
-  // 5. Financial and Lifecycle Integrity Checks
-  // A. Check if booking was cancelled
-  if (booking.status === 'cancelled') {
-    console.error(`${logPrefix} Booking '${matchedPayment.bookingId}' is cancelled. Rejecting payment confirmation.`);
-    return {
-      success: false,
-      statusCode: 400,
-      error: 'Cannot apply payment to a cancelled reservation.'
-    };
-  }
+  // 7. Event Classification
+  const isPaymentSuccessEvent = 
+    eventName === 'payment.success' || 
+    eventName === 'payment.completed' || 
+    (eventName.startsWith('payment.') && webhookStatus === 'paid');
 
-  // B. Currency validation
+  const isPaymentFailedEvent = 
+    eventName === 'payment.failed' || 
+    (eventName.startsWith('payment.') && webhookStatus === 'failed');
+
+  const isPaymentPendingEvent = 
+    eventName === 'payment.pending' || 
+    (eventName.startsWith('payment.') && webhookStatus === 'pending');
+
+  const isRefundSuccessEvent = 
+    eventName === 'refund.success' || 
+    eventName === 'refund.completed' || 
+    (eventName.startsWith('refund.') && (webhookStatus === 'completed' || webhookStatus === 'paid'));
+
+  const isRefundFailedEvent = 
+    eventName === 'refund.failed' || 
+    (eventName.startsWith('refund.') && webhookStatus === 'failed');
+
+  // 8. Financial and Lifecycle Integrity Checks
   const authoritativeCurrency = (booking.currency || matchedPayment.currency || 'MZN').toUpperCase();
   if (authoritativeCurrency !== 'MZN') {
     console.error(`${logPrefix} Currency mismatch: expected MZN, got '${authoritativeCurrency}'.`);
@@ -549,25 +723,44 @@ export async function processPaySuiteWebhook(
     };
   }
 
-  // C. Strict Amount Matching
-  const paymentAmount = Math.round(Number(matchedPayment.amount));
-  const bookingAmount = Math.round(Number(booking.totalAmount || booking.totalMzn || 0));
-  const webhookAmount = Math.round(Number(amount));
-
-  if (webhookAmount !== paymentAmount || paymentAmount !== bookingAmount) {
-    console.error(
-      `${logPrefix} Amount mismatch detected: Webhook=${webhookAmount}, PaymentRecord=${paymentAmount}, BookingRecord=${bookingAmount}. REJECTING.`
-    );
+  // Cancelled booking guard: Cannot confirm payment for an already cancelled booking
+  if (booking.status === 'cancelled' && isPaymentSuccessEvent) {
+    console.error(`${logPrefix} Booking '${matchedPayment.bookingId}' is cancelled. Rejecting payment confirmation.`);
     return {
       success: false,
-      statusCode: 422,
-      error: `Amount mismatch: PaySuite amount (${webhookAmount} MZN) does not match authoritative booking amount (${bookingAmount} MZN).`
+      statusCode: 400,
+      error: 'Cannot apply payment to a cancelled reservation.'
     };
   }
 
-  // 6. Idempotency Check
-  // If payment is already marked 'paid', this is a harmless duplicate delivery
-  if (matchedPayment.status === 'paid') {
+  const paymentAmount = Math.round(Number(matchedPayment.amount));
+  const bookingAmount = Math.round(Number(booking.totalAmount || booking.totalMzn || 0));
+  const webhookAmount = amount !== undefined ? Math.round(Number(amount)) : paymentAmount;
+
+  if (isPaymentSuccessEvent) {
+    if (webhookAmount !== paymentAmount || paymentAmount !== bookingAmount) {
+      console.error(
+        `${logPrefix} Amount mismatch detected: Webhook=${webhookAmount}, PaymentRecord=${paymentAmount}, BookingRecord=${bookingAmount}. REJECTING.`
+      );
+      return {
+        success: false,
+        statusCode: 422,
+        error: `Amount mismatch: PaySuite amount (${webhookAmount} MZN) does not match authoritative booking amount (${bookingAmount} MZN).`
+      };
+    }
+  } else if (isRefundSuccessEvent) {
+    if (webhookAmount <= 0 || webhookAmount > paymentAmount) {
+      console.error(`${logPrefix} Invalid refund amount: ${webhookAmount} MZN (Payment: ${paymentAmount} MZN).`);
+      return {
+        success: false,
+        statusCode: 422,
+        error: `Invalid refund amount: ${webhookAmount} MZN exceeds payment amount ${paymentAmount} MZN.`
+      };
+    }
+  }
+
+  // 9. Idempotency Checks
+  if (isPaymentSuccessEvent && matchedPayment.status === 'paid') {
     console.log(`${logPrefix} Duplicate webhook delivery: Payment '${paymentDocId}' is already settled.`);
     return {
       success: true,
@@ -580,14 +773,77 @@ export async function processPaySuiteWebhook(
     };
   }
 
-  // 7. Authoritative State Transition (Firebase Admin Privileged Path)
-  const isSuccessEvent = payload.event === 'payment.success' || webhookStatus === 'paid';
-  const isFailureEvent = payload.event === 'payment.failed' || webhookStatus === 'failed';
+  if (isPaymentFailedEvent && matchedPayment.status === 'failed') {
+    console.log(`${logPrefix} Duplicate webhook delivery: Payment '${paymentDocId}' is already recorded as failed.`);
+    return {
+      success: true,
+      statusCode: 200,
+      status: 'already_failed',
+      message: 'Payment was already recorded as failed.',
+      paymentId: paymentDocId,
+      bookingId: matchedPayment.bookingId
+    };
+  }
 
-  if (isSuccessEvent) {
+  if (isRefundSuccessEvent && matchedPayment.refundStatus === 'completed') {
+    console.log(`${logPrefix} Duplicate webhook delivery: Refund for payment '${paymentDocId}' is already completed.`);
+    return {
+      success: true,
+      statusCode: 200,
+      status: 'already_refunded',
+      message: 'Refund was already completed and settled.',
+      paymentId: paymentDocId,
+      bookingId: matchedPayment.bookingId
+    };
+  }
+
+  if (isRefundFailedEvent && matchedPayment.refundStatus === 'failed') {
+    console.log(`${logPrefix} Duplicate webhook delivery: Refund failure for '${paymentDocId}' was already recorded.`);
+    return {
+      success: true,
+      statusCode: 200,
+      status: 'already_refund_failed',
+      message: 'Refund failure was already recorded.',
+      paymentId: paymentDocId
+    };
+  }
+
+  // 10. Handle Pending Payment Event (Keep reservation unconfirmed, acknowledge receipt)
+  if (isPaymentPendingEvent) {
+    console.log(`${logPrefix} Acknowledged pending payment event for '${paymentDocId}'.`);
+    try {
+      await adminDb.collection('payment_audit_logs').add({
+        eventId: `evt_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+        eventType: eventName,
+        paymentId: paymentDocId,
+        bookingId: matchedPayment.bookingId,
+        bookingRef: matchedPayment.bookingRef,
+        amount: webhookAmount,
+        currency: 'MZN',
+        status: 'pending',
+        paysuitePaymentId: paysuiteId || lookupPaymentId,
+        timestamp: new Date().toISOString(),
+        createdAtServer: AdminFieldValue.serverTimestamp()
+      });
+    } catch (auditErr) {
+      console.warn(`${logPrefix} Audit log recording note:`, auditErr);
+    }
+
+    return {
+      success: true,
+      statusCode: 200,
+      status: 'pending_acknowledged',
+      message: 'Payment is pending. Reservation remains unconfirmed.',
+      paymentId: paymentDocId,
+      bookingId: matchedPayment.bookingId
+    };
+  }
+
+  // 11. Authoritative State Transition: Successful Payment
+  if (isPaymentSuccessEvent) {
     console.log(`${logPrefix} Executing authoritative settlement transition for payment '${paymentDocId}'...`);
     const settledAt = paid_at || new Date().toISOString();
-    const txnRef = transaction_id || paysuitePaymentId;
+    const txnRef = transaction_id || paysuiteId || lookupPaymentId;
 
     try {
       await adminDb.runTransaction(async (transaction) => {
@@ -603,7 +859,6 @@ export async function processPaySuiteWebhook(
 
         const currentPData = currentPSnap.data() as PaymentLedgerEntry;
         if (currentPData.status === 'paid') {
-          // Already marked paid by concurrent handler
           return;
         }
 
@@ -643,14 +898,14 @@ export async function processPaySuiteWebhook(
       try {
         await adminDb.collection('payment_audit_logs').add({
           eventId: `evt_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-          eventType: payload.event,
+          eventType: eventName,
           paymentId: paymentDocId,
           bookingId: matchedPayment.bookingId,
           bookingRef: matchedPayment.bookingRef,
           amount: webhookAmount,
           currency: 'MZN',
           status: 'settled',
-          paysuitePaymentId,
+          paysuitePaymentId: paysuiteId || lookupPaymentId,
           timestamp: new Date().toISOString(),
           createdAtServer: AdminFieldValue.serverTimestamp()
         });
@@ -675,11 +930,15 @@ export async function processPaySuiteWebhook(
         error: `Settlement transaction failed: ${txErr.message}`
       };
     }
-  } else if (isFailureEvent) {
+  }
+
+  // 12. Authoritative State Transition: Failed Payment
+  if (isPaymentFailedEvent) {
     console.log(`${logPrefix} Recording payment failure for payment '${paymentDocId}'...`);
     try {
       await adminDb.collection('payments').doc(paymentDocId).update({
         status: 'failed',
+        failureReason: reason || 'Payment transaction failed on PaySuite gateway',
         updatedAt: new Date().toISOString(),
         updatedAtServer: AdminFieldValue.serverTimestamp()
       });
@@ -695,6 +954,24 @@ export async function processPaySuiteWebhook(
         await releaseInventorySlotReservation(matchedPayment.bookingId, matchedPayment.bookingCategory);
       } catch (relErr) {
         console.warn(`${logPrefix} Inventory hold release note:`, relErr);
+      }
+
+      try {
+        await adminDb.collection('payment_audit_logs').add({
+          eventId: `evt_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+          eventType: eventName,
+          paymentId: paymentDocId,
+          bookingId: matchedPayment.bookingId,
+          bookingRef: matchedPayment.bookingRef,
+          amount: webhookAmount,
+          currency: 'MZN',
+          status: 'failed',
+          paysuitePaymentId: paysuiteId || lookupPaymentId,
+          timestamp: new Date().toISOString(),
+          createdAtServer: AdminFieldValue.serverTimestamp()
+        });
+      } catch (auditErr) {
+        console.warn(`${logPrefix} Audit log recording note:`, auditErr);
       }
 
       return {
@@ -715,14 +992,11 @@ export async function processPaySuiteWebhook(
     }
   }
 
-  // Handle PaySuite Refund Webhook Events (Prompt 28C - Part 2)
-  const isRefundSuccessEvent = payload.event === 'refund.completed' || webhookStatus === 'completed';
-  const isRefundFailureEvent = payload.event === 'refund.failed';
-
+  // 13. Authoritative State Transition: Refund Success
   if (isRefundSuccessEvent) {
     console.log(`${logPrefix} Processing authoritative refund completion for payment '${paymentDocId}'...`);
     const completedAt = paid_at || new Date().toISOString();
-    const refundAmount = Number(payload.data?.amount || matchedPayment.amount);
+    const refundAmount = Number(amount || matchedPayment.amount);
 
     try {
       await adminDb.runTransaction(async (transaction) => {
@@ -745,8 +1019,10 @@ export async function processPaySuiteWebhook(
         });
       });
 
-      // Update matching refund records
-      const refundDocs = await adminDb.collection('refunds').where('paymentId', '==', paymentDocId).get();
+      // Update matching refund records in refunds collection
+      const refundDocs = await adminDb.collection('refunds')
+        .where('paymentId', '==', paymentDocId)
+        .get();
       if (!refundDocs.empty) {
         for (const rDoc of refundDocs.docs) {
           if (rDoc.data().status !== 'completed') {
@@ -757,6 +1033,23 @@ export async function processPaySuiteWebhook(
             });
           }
         }
+      }
+
+      try {
+        await adminDb.collection('payment_audit_logs').add({
+          eventId: `evt_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+          eventType: eventName,
+          paymentId: paymentDocId,
+          bookingId: matchedPayment.bookingId,
+          bookingRef: matchedPayment.bookingRef,
+          amount: refundAmount,
+          currency: 'MZN',
+          status: 'refunded',
+          timestamp: new Date().toISOString(),
+          createdAtServer: AdminFieldValue.serverTimestamp()
+        });
+      } catch (auditErr) {
+        console.warn(`${logPrefix} Audit log recording note:`, auditErr);
       }
 
       return {
@@ -776,39 +1069,66 @@ export async function processPaySuiteWebhook(
         error: `Refund settlement transaction failure: ${rErr.message}`
       };
     }
-  } else if (isRefundFailureEvent) {
-    console.log(`${logPrefix} Recording refund failure for payment '${paymentDocId}'...`);
-    const refundDocs = await adminDb.collection('refunds').where('paymentId', '==', paymentDocId).get();
-    if (!refundDocs.empty) {
-      for (const rDoc of refundDocs.docs) {
-        if (rDoc.data().status !== 'completed') {
-          await rDoc.ref.update({
-            status: 'failed',
-            failureReason: payload.data?.reason || 'Provider reported refund failure',
-            updatedAt: new Date().toISOString()
-          });
-        }
-      }
-    }
-    await adminDb.collection('payments').doc(paymentDocId).update({
-      refundStatus: 'failed',
-      updatedAt: new Date().toISOString()
-    });
-    return {
-      success: true,
-      statusCode: 200,
-      status: 'refund_failed_recorded',
-      message: 'Refund failure recorded.',
-      paymentId: paymentDocId
-    };
   }
 
-  // Other unhandled events
+  // 14. Authoritative State Transition: Refund Failure
+  if (isRefundFailedEvent) {
+    console.log(`${logPrefix} Recording refund failure for payment '${paymentDocId}'...`);
+    try {
+      const refundDocs = await adminDb.collection('refunds').where('paymentId', '==', paymentDocId).get();
+      if (!refundDocs.empty) {
+        for (const rDoc of refundDocs.docs) {
+          if (rDoc.data().status !== 'completed') {
+            await rDoc.ref.update({
+              status: 'failed',
+              failureReason: reason || 'Provider reported refund failure',
+              updatedAt: new Date().toISOString()
+            });
+          }
+        }
+      }
+      await adminDb.collection('payments').doc(paymentDocId).update({
+        refundStatus: 'failed',
+        updatedAt: new Date().toISOString()
+      });
+
+      try {
+        await adminDb.collection('payment_audit_logs').add({
+          eventId: `evt_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+          eventType: eventName,
+          paymentId: paymentDocId,
+          bookingId: matchedPayment.bookingId,
+          status: 'refund_failed',
+          timestamp: new Date().toISOString(),
+          createdAtServer: AdminFieldValue.serverTimestamp()
+        });
+      } catch (auditErr) {
+        console.warn(`${logPrefix} Audit log recording note:`, auditErr);
+      }
+
+      return {
+        success: true,
+        statusCode: 200,
+        status: 'refund_failed_recorded',
+        message: 'Refund failure recorded.',
+        paymentId: paymentDocId
+      };
+    } catch (rFailErr: any) {
+      console.error(`${logPrefix} Failed to record refund failure:`, rFailErr.message);
+      return {
+        success: false,
+        statusCode: 500,
+        error: `Failed to record refund failure: ${rFailErr.message}`
+      };
+    }
+  }
+
+  // 15. Other unhandled events (gracefully acknowledged with 200)
   return {
     success: true,
     statusCode: 200,
     status: 'unhandled_event_acknowledged',
-    message: `Received event '${payload.event}' without state transition.`
+    message: `Received event '${eventName}' without state transition.`
   };
 }
 

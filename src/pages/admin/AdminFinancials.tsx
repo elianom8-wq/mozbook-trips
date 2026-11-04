@@ -23,10 +23,12 @@ import {
   Copy,
   Check,
   Eye,
-  Info
+  Info,
+  Lock
 } from 'lucide-react';
 import AdminLayout from '../../components/admin/AdminLayout';
 import { adminService } from '../../services/adminService';
+import { useAuth } from '../../context/AuthContext';
 import { 
   AdminFinancialSummary, 
   AdminFinancialTransaction, 
@@ -34,6 +36,7 @@ import {
 } from '../../types/admin';
 
 export default function AdminFinancials() {
+  const { isMaster } = useAuth();
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
@@ -120,9 +123,9 @@ export default function AdminFinancials() {
     });
   }, [transactions, selectedType, selectedStatus, searchQuery]);
 
-  // Export CSV handler
+  // Export CSV handler (Strictly restricted to Master Administrator)
   const handleExportCSV = () => {
-    if (!transactions.length) return;
+    if (!isMaster || !transactions.length) return;
 
     const headers = [
       'Transaction ID',
@@ -207,14 +210,25 @@ export default function AdminFinancials() {
               <span>{refreshing ? 'Reconciling...' : 'Refresh Financials'}</span>
             </button>
 
-            <button
-              onClick={handleExportCSV}
-              disabled={loading || transactions.length === 0}
-              className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 transition-colors cursor-pointer disabled:opacity-50"
-            >
-              <Download size={14} />
-              <span>Export Ledger CSV</span>
-            </button>
+            {isMaster ? (
+              <button
+                onClick={handleExportCSV}
+                disabled={loading || transactions.length === 0}
+                className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 transition-colors cursor-pointer disabled:opacity-50"
+                title="Export complete financial ledger (Master Administrator exclusive)"
+              >
+                <Download size={14} />
+                <span>Export Ledger CSV</span>
+              </button>
+            ) : (
+              <div 
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-800/40 border border-slate-700/50 text-slate-500 text-xs font-medium cursor-not-allowed" 
+                title="Direct platform data export is restricted to the Master Administrator. Sub-admins are limited to authorized on-screen operational reporting."
+              >
+                <Lock size={13} className="text-slate-500" />
+                <span>Export Restricted</span>
+              </div>
+            )}
           </div>
         </div>
 
