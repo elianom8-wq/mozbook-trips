@@ -1120,3 +1120,57 @@ export function isCanonicalAccommodationTypeId(id?: string): id is CanonicalAcco
   if (!id) return false;
   return CANONICAL_ACCOMMODATION_TYPES.some(t => t.backend_id === id);
 }
+
+/**
+ * Checks whether an accommodation type is a lodge or safari lodge.
+ * Preserves legacy 'lodge' behavior where multi-unit is standard and expected.
+ */
+export function isLodgeAccommodationType(canonicalId?: string, legacyType?: string): boolean {
+  if (legacyType === 'lodge') return true;
+  if (!canonicalId) return false;
+  return canonicalId.includes('LODGE') || canonicalId === 'SAFARI_RESORT';
+}
+
+/**
+ * Canonical types that represent commercial multi-unit hospitality properties
+ * (Hotels, Resorts, Guesthouses, Hostels, Lodges, Campsites, Safari Camps, etc.)
+ */
+export const COMMERCIAL_MULTI_UNIT_CANONICAL_TYPES: readonly CanonicalAccommodationTypeId[] = [
+  // Hotels & Traditional Lodging
+  'HOTEL', 'BOUTIQUE_HOTEL', 'HOTEL_APARTMENT', 'APARTHOTEL',
+  // Hotels & Resorts
+  'RESORT', 'BEACH_RESORT', 'ECO_RESORT', 'ISLAND_RESORT', 'FAMILY_RESORT', 'WELLNESS_RESORT',
+  // Specialist
+  'DIVING_RESORT', 'FISHING_RESORT', 'SAFARI_RESORT', 'SURF_CAMP', 'RETREAT_CENTRE',
+  // Independent & Small Accommodation
+  'GUESTHOUSE', 'BED_AND_BREAKFAST', 'INN', 'PENSION', 'RESIDENCIAL', 'FAMILY_GUESTHOUSE',
+  // Budget & Social
+  'HOSTEL', 'BACKPACKER_HOSTEL', 'DORMITORY',
+  // Lodges & Nature
+  'LODGE', 'ECO_LODGE', 'BEACH_LODGE', 'ISLAND_LODGE', 'SAFARI_LODGE', 'FISHING_LODGE',
+  'RIVER_LAKE_LODGE', 'FOREST_LODGE', 'MOUNTAIN_LODGE', 'WILDERNESS_LODGE', 'COMMUNITY_LODGE', 'TENTED_LODGE',
+  // Camping & Tented
+  'TENTED_CAMP', 'SAFARI_CAMP', 'BUSH_CAMP', 'ECO_CAMP', 'COMMUNITY_CAMP', 'BEACH_CAMP',
+  'WILDERNESS_CAMP', 'PERMANENT_TENT', 'MOBILE_CAMP',
+  // Camping & Outdoor
+  'CAMPSITE', 'PRIVATE_CAMPSITE', 'LUXURY_CAMPING', 'GLAMPING', 'CARAVAN_CAMP', 'BACKPACKER_CAMP'
+];
+
+/**
+ * Checks whether an accommodation type is a commercial multi-unit hospitality type.
+ */
+export function isCommercialMultiUnitType(canonicalId?: string, legacyType?: string): boolean {
+  if (legacyType === 'lodge') return true;
+  if (!canonicalId) return false;
+  return COMMERCIAL_MULTI_UNIT_CANONICAL_TYPES.includes(canonicalId as CanonicalAccommodationTypeId);
+}
+
+/**
+ * Checks whether an accommodation type supports multi-unit configuration.
+ * All MozBook accommodation types support multi-unit configuration (e.g. multi-room villas,
+ * estate chalets, campsite pitches, or hotel suites).
+ */
+export function isMultiUnitCapable(canonicalId?: string): boolean {
+  return true;
+}
+

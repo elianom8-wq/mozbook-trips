@@ -78,7 +78,10 @@ import {
   OperatingModelId,
   SettingId,
   ClassificationStatus,
-  mapLegacyResidenceType
+  mapLegacyResidenceType,
+  isLodgeAccommodationType,
+  isCommercialMultiUnitType,
+  isMultiUnitCapable
 } from '../data/canonicalAccommodationTaxonomy';
 import LodgeAccommodationManager from '../components/LodgeAccommodationManager';
 import AccommodationUnitManager from '../components/AccommodationUnitManager';
@@ -171,6 +174,10 @@ export default function EditListing() {
   // Multi-Unit Accommodation State (Stage 3E Generalized Multi-Unit)
   const [accommodations, setAccommodations] = useState<LodgeAccommodation[]>([]);
   const [isMultiUnit, setIsMultiUnit] = useState<boolean>(false);
+  const [showDisableMultiUnitConfirm, setShowDisableMultiUnitConfirm] = useState<boolean>(false);
+
+  const isLodge = isLodgeAccommodationType(canonicalType, residenceType);
+  const isMultiUnitActive = Boolean(isLodge || isMultiUnit || accommodations.length > 0);
 
   // Image Upload & Camera Modal
   const [newPhotoUrl, setNewPhotoUrl] = useState('');
@@ -283,9 +290,12 @@ export default function EditListing() {
 
         setNearbyPlaces(listingData.nearbyPlaces || []);
         setAccommodations(listingData.accommodations || []);
-        if ((listingData.accommodations && listingData.accommodations.length > 0) || listingData.residenceType === 'lodge') {
-          setIsMultiUnit(true);
-        }
+        const hasAccommodations = Boolean(listingData.accommodations && listingData.accommodations.length > 0);
+        const isLodgeDoc = listingData.residenceType === 'lodge' || Boolean(listingData.canonicalType && isLodgeAccommodationType(listingData.canonicalType, listingData.residenceType));
+        const initialMultiUnit = typeof listingData.isMultiUnit === 'boolean'
+          ? listingData.isMultiUnit
+          : Boolean(hasAccommodations || isLodgeDoc);
+        setIsMultiUnit(initialMultiUnit);
 
         if (listingData.canonicalType) {
           setCanonicalType(listingData.canonicalType);
@@ -362,6 +372,9 @@ export default function EditListing() {
         if (legacyFallback) {
           setResidenceType(legacyFallback);
         }
+        if (accommodations.length > 0 || isLodgeAccommodationType(nextType, legacyFallback)) {
+          setIsMultiUnit(true);
+        }
       }
     }
   };
@@ -377,11 +390,16 @@ export default function EditListing() {
     if (cat && cat !== selectedParentCategory) {
       setSelectedParentCategory(cat);
     }
+    if (accommodations.length > 0 || isLodgeAccommodationType(newCanonicalId, legacyFallback)) {
+      setIsMultiUnit(true);
+    }
   };
 
   const handleToggleOperatingModel = (modelId: OperatingModelId) => {
     setSelectedOperatingModels(prev => 
-      prev.includes(modelId) ? prev.filter(id => id !== modelId) : [...prev, modelId]
+      prev.includes(modelId)
+        ? prev.length > 1 ? prev.filter(id => id !== modelId) : prev
+        : [...prev, modelId]
     );
   };
 
@@ -541,7 +559,7 @@ export default function EditListing() {
         residenceType,
         canonicalType: canonicalType || undefined,
         canonicalCategory: selectedParentCategory,
-        operatingModels: selectedOperatingModels.length > 0 ? selectedOperatingModels : undefined,
+        operatingModels: selectedOperatingModels.length > 0 ? selectedOperatingModels : ['SELF_CATERING'],
         settings: selectedSettings.length > 0 ? selectedSettings : undefined,
         classificationStatus: classificationStatus || undefined,
         price,
@@ -570,8 +588,9 @@ export default function EditListing() {
         coordinates,
         nearbyPlaces,
         specialOffer: specialOffer && specialOffer.enabled ? specialOffer : null,
-        accommodations: (residenceType === 'lodge' || isMultiUnit) ? accommodations : [],
-        totalLodgeUnits: (residenceType === 'lodge' || isMultiUnit) ? calculateTotalLodgeUnits(accommodations) : undefined
+        isMultiUnit: isMultiUnitActive,
+        accommodations: isMultiUnitActive ? accommodations : [],
+        totalLodgeUnits: isMultiUnitActive ? calculateTotalLodgeUnits(accommodations) : undefined
       };
 
       // 1. Update listing
@@ -857,21 +876,29 @@ export default function EditListing() {
                   Multi-Unit Property Configuration
                 </span>
                 <span className="text-xs text-gray-500">
-                  {residenceType === 'lodge' 
+                  {isLodge 
                     ? 'Lodge multi-unit room & chalet management is automatically enabled.' 
+                    : isCommercialMultiUnitType(canonicalType, residenceType)
+                    ? 'Multi-unit configuration enabled for commercial accommodation (rooms, suites, chalets, tents or pitches).'
                     : 'Enable if this property offers multiple rooms, chalets, suites, villas, tents or camping pitches.'}
                 </span>
               </div>
               <label className="relative inline-flex items-center cursor-pointer shrink-0">
                 <input
                   type="checkbox"
-                  checked={residenceType === 'lodge' || isMultiUnit}
-                  disabled={residenceType === 'lodge'}
+                  checked={isMultiUnitActive}
+                  disabled={isLodge}
                   onChange={(e) => {
                     const checked = e.target.checked;
-                    setIsMultiUnit(checked);
-                    if (!checked && residenceType !== 'lodge') {
-                      setAccommodations([]);
+                    if (checked) {
+                      setIsMultiUnit(true);
+                      setShowDisableMultiUnitConfirm(false);
+                    } else {
+                      if (accommodations.length > 0) {
+                        setShowDisableMultiUnitConfirm(true);
+                      } else {
+                        setIsMultiUnit(false);
+                      }
                     }
                   }}
                   className="sr-only peer"
@@ -879,10 +906,45 @@ export default function EditListing() {
                 <div className="w-11 h-6 bg-gray-200 peer-focus:outline-hidden rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#009A60]"></div>
               </label>
             </div>
+
+            {/* Confirmation Banner before clearing configured units */}
+            {showDisableMultiUnitConfirm && (
+              <div className="p-4 bg-amber-50 border-2 border-amber-300 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 animate-fade-in">
+                <div className="flex items-start gap-3">
+                  <AlertCircle className="w-5 h-5 text-amber-600 mt-0.5 shrink-0" />
+                  <div>
+                    <h4 className="text-sm font-bold text-amber-950">Disable Multi-Unit Configuration?</h4>
+                    <p className="text-xs text-amber-800 mt-0.5">
+                      You have {accommodations.length} configured accommodation unit{accommodations.length > 1 ? 's' : ''}. Disabling multi-unit will remove these room/unit records and switch this listing to a single full-property booking.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setShowDisableMultiUnitConfirm(false)}
+                    className="px-3 py-1.5 bg-white border border-gray-300 text-xs font-semibold text-gray-700 rounded-lg hover:bg-gray-50 cursor-pointer"
+                  >
+                    Keep Units
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAccommodations([]);
+                      setIsMultiUnit(false);
+                      setShowDisableMultiUnitConfirm(false);
+                    }}
+                    className="px-3 py-1.5 bg-rose-600 text-xs font-semibold text-white rounded-lg hover:bg-rose-700 cursor-pointer"
+                  >
+                    Confirm & Remove Units
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Generalized Multi-Unit Accommodation Section (Stage 3E) */}
-          {(residenceType === 'lodge' || isMultiUnit) && (
+          {isMultiUnitActive && (
             <AccommodationUnitManager
               accommodations={accommodations}
               onChange={setAccommodations}
@@ -894,9 +956,8 @@ export default function EditListing() {
                 }
               }}
               propertyTypeTitle={
-                residenceType === 'lodge' 
-                  ? 'Lodge' 
-                  : 'Accommodation'
+                getCanonicalAccommodationType(canonicalType)?.display_name || 
+                (isLodge ? 'Lodge' : 'Accommodation')
               }
             />
           )}

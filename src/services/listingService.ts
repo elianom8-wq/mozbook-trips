@@ -307,6 +307,7 @@ export interface Listing {
   specialOffer?: SpecialOffer | null;
   accommodations?: LodgeAccommodation[];
   totalLodgeUnits?: number;
+  isMultiUnit?: boolean;
   // MozBook Inventory Allocation & Availability (Prompt 28)
   mozbookAllocatedUnits?: number;
   blockedDates?: string[];

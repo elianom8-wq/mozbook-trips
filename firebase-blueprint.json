@@ -176,6 +176,9 @@
         "totalLodgeUnits": {
           "type": "number"
         },
+        "isMultiUnit": {
+          "type": "boolean"
+        },
         "createdAt": {
           "type": "string",
           "format": "date-time"
