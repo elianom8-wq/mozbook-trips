@@ -2,7 +2,9 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import { 
   onAuthStateChanged, 
   User, 
-  signInWithPopup, 
+  signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
   GoogleAuthProvider, 
   signOut,
   IdTokenResult
@@ -36,8 +38,15 @@ interface AuthContextType {
   tokenClaims: Record<string, any> | null;
   loading: boolean;
   login: () => Promise<void>;
+  loginWithRedirect: () => Promise<void>;
   logout: () => Promise<void>;
   refreshAdminClaims: () => Promise<boolean>;
+  isAuthModalOpen: boolean;
+  authModalMode: 'login' | 'signup';
+  openAuthModal: (mode?: 'login' | 'signup') => void;
+  closeAuthModal: () => void;
+  authError: string | null;
+  clearAuthError: () => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -51,6 +60,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [hasCustomClaim, setHasCustomClaim] = useState(false);
   const [tokenClaims, setTokenClaims] = useState<Record<string, any> | null>(null);
   const [loading, setLoading] = useState(true);
+
+  // Authentication Modal & Feedback State
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [authModalMode, setAuthModalMode] = useState<'login' | 'signup'>('login');
+  const [authError, setAuthError] = useState<string | null>(null);
+
+  const openAuthModal = (mode: 'login' | 'signup' = 'login') => {
+    setAuthModalMode(mode);
+    setAuthError(null);
+    setIsAuthModalOpen(true);
+  };
+
+  const closeAuthModal = () => {
+    setIsAuthModalOpen(false);
+  };
+
+  const clearAuthError = () => {
+    setAuthError(null);
+  };
 
   // Helper to verify ID token claims and email authorization
   const evaluateAdminStatus = async (currentUser: User) => {
@@ -203,13 +231,46 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setLoading(false);
     });
 
+    // Process redirect sign-in result if returning from a redirect authentication flow
+    getRedirectResult(auth)
+      .then(async (credential) => {
+        if (credential?.user) {
+          purgeAllUserSessionData();
+          commitActiveSessionUid(credential.user.uid);
+          setFreshAuthNavigationPending();
+          setIsAuthModalOpen(false);
+        }
+      })
+      .catch((redirectErr: any) => {
+        console.warn('Redirect sign-in inspection:', redirectErr);
+        if (redirectErr?.code) {
+          setAuthError(redirectErr.message || 'Redirect authentication failed');
+        }
+      });
+
     return () => unsubscribe();
   }, []);
+
+  const loginWithRedirect = async () => {
+    const provider = new GoogleAuthProvider();
+    provider.setCustomParameters({ prompt: 'select_account' });
+    setLoading(true);
+    setAuthError(null);
+    try {
+      await signInWithRedirect(auth, provider);
+    } catch (error: any) {
+      setLoading(false);
+      console.error("Redirect login error:", error);
+      setAuthError(error?.message || 'Failed to initiate redirect sign-in');
+      throw error;
+    }
+  };
 
   const login = async () => {
     const provider = new GoogleAuthProvider();
     provider.setCustomParameters({ prompt: 'select_account' });
     setLoading(true);
+    setAuthError(null);
     setIsAdmin(false);
     setHasCustomClaim(false);
     setTokenClaims(null);
@@ -219,6 +280,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const signedInUser = userCredential.user;
 
       if (signedInUser) {
+        setIsAuthModalOpen(false);
+        setAuthError(null);
+
         // Enforce platform-wide rule: purge prior session data, mark fresh auth
         purgeAllUserSessionData();
         commitActiveSessionUid(signedInUser.uid);
@@ -249,9 +313,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           }
         }
       }
-    } catch (error) {
+    } catch (error: any) {
       setLoading(false);
+      const errorCode = error?.code || '';
+      const errorMsg = error?.message || '';
       console.error("Google login error:", error);
+
+      let userMsg = errorMsg;
+      if (errorCode === 'auth/unauthorized-domain') {
+        userMsg = 'This domain (mozbookings.com) is not authorized in Firebase Console -> Authentication -> Settings -> Authorized Domains.';
+      } else if (errorCode === 'auth/popup-blocked') {
+        userMsg = 'Google Sign-in popup was blocked by your browser. Please allow popups or use redirect sign-in.';
+      } else if (errorCode === 'auth/popup-closed-by-user') {
+        userMsg = 'Sign-in cancelled: The Google popup window was closed.';
+      }
+      setAuthError(userMsg);
       throw error;
     }
   };
@@ -265,6 +341,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setTokenClaims(null);
     setProfile(null);
     setUser(null);
+    setIsAuthModalOpen(false);
+    setAuthError(null);
     
     // Platform-wide rule: purge all cached data and set transition
     purgeAllUserSessionData();
@@ -299,14 +377,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       profile, 
       isAdmin, 
       isMaster,
-      adminPermissions,
-      hasPermission,
-      hasCustomClaim,
-      tokenClaims,
+      adminPermissions, 
+      hasPermission, 
+      hasCustomClaim, 
+      tokenClaims, 
       loading, 
       login, 
-      logout,
-      refreshAdminClaims
+      loginWithRedirect,
+      logout, 
+      refreshAdminClaims,
+      isAuthModalOpen,
+      authModalMode,
+      openAuthModal,
+      closeAuthModal,
+      authError,
+      clearAuthError
     }}>
       {children}
     </AuthContext.Provider>

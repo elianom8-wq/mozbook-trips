@@ -6,9 +6,10 @@ import { useAuth } from '../context/AuthContext';
 import { useSearch } from '../context/SearchContext';
 import MozBookLogo from './MozBookLogo';
 import AppSettingsModal from './AppSettingsModal';
+import AuthModal from './AuthModal';
 
 export default function Navbar() {
-  const { user, isAdmin, login, logout } = useAuth();
+  const { user, isAdmin, login, logout, openAuthModal } = useAuth();
   const { filters, totalGuests, isSearchActive, openSearchTab, clearFilters } = useSearch();
   const location = useLocation();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -392,13 +393,13 @@ export default function Navbar() {
                 ) : (
                   <div className="overflow-y-auto overscroll-contain py-2 flex-1 scrollbar-thin scrollbar-thumb-gray-200 max-h-[75vh]">
                     <button 
-                      onClick={() => { login(); setIsMenuOpen(false); }}
+                      onClick={() => { openAuthModal('login'); setIsMenuOpen(false); }}
                       className="w-full text-left px-4 py-2 text-sm hover:bg-[#e6f7f0] hover:text-[#009A60] font-semibold cursor-pointer"
                     >
                       Log in
                     </button>
                     <button 
-                      onClick={() => { login(); setIsMenuOpen(false); }}
+                      onClick={() => { openAuthModal('signup'); setIsMenuOpen(false); }}
                       className="w-full text-left px-4 py-2 text-sm hover:bg-gray-100 cursor-pointer"
                     >
                       Sign up
@@ -471,6 +472,9 @@ export default function Navbar() {
           onClose={() => setShowSettingsModal(false)}
         />
       )}
+
+      {/* Global Authentication Modal (Login & Sign Up) */}
+      <AuthModal />
     </nav>
   );
 }
